@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-73.95, 45.05],
+          [-73.80, 45.05],
+          [-73.80, 45.20],
+          [-73.95, 45.20],
+          [-73.95, 45.05]
+        ]]
+      },
+      "properties": {
+        "tile_id": "QC_MNT_TILE_010",
+        "product": "mnt",
+        "url": "https://lidar-telechargement.portailcartographique.gouv.qc.ca/EXEMPLE/mnt_010.tif",
+        "year": 2023,
+        "provider": "QC"
+      }
+    }
+  ]
+}

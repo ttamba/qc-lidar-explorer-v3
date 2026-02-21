@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-73.98, 45.02],
+          [-73.86, 45.02],
+          [-73.86, 45.12],
+          [-73.98, 45.12],
+          [-73.98, 45.02]
+        ]]
+      },
+      "properties": {
+        "tile_id": "QC_LIDAR_TILE_001",
+        "product": "lidar",
+        "url": "https://lidar-telechargement.portailcartographique.gouv.qc.ca/EXEMPLE/tuile_001.laz",
+        "year": 2023,
+        "provider": "QC"
+      }
+    }
+  ]
+}

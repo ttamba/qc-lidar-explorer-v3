@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "QC-DEMO-001",
+        "name": "Tuile démo COPC (Autzen – exemple public)",
+        "copc_url": "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz",
+        "download_url": "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-71.32, 46.78],
+          [-71.18, 46.78],
+          [-71.18, 46.88],
+          [-71.32, 46.88],
+          [-71.32, 46.78]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "QC-DEMO-002",
+        "name": "Tuile démo EPT (Dublin – exemple public)",
+        "ept_url": "https://na-c.entwine.io/dublin/ept.json",
+        "download_url": "https://na-c.entwine.io/dublin/ept.json"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-71.20, 46.70],
+          [-71.06, 46.70],
+          [-71.06, 46.80],
+          [-71.20, 46.80],
+          [-71.20, 46.70]
+        ]]
+      }
+    }
+  ]
+}
