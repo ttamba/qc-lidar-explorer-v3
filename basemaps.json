@@ -1,0 +1,23 @@
+{
+  "basemaps": [
+    {
+      "id": "osm",
+      "label": "OpenStreetMap",
+      "type": "raster",
+      "tiles": ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      "tileSize": 256,
+      "attribution": "© OpenStreetMap contributors"
+    }
+  ],
+  "overlays": [
+    {
+      "id": "qc-lidar-index-wms",
+      "label": "Index LiDAR (WMS) - optionnel",
+      "type": "wms",
+      "url": "https://example.com/geoserver/wms",
+      "layers": "lidar_index",
+      "format": "image/png",
+      "transparent": true
+    }
+  ]
+}
