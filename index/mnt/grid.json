@@ -1,0 +1,11 @@
+{
+  "version": "2026-02-11",
+  "chunkSizeDeg": 0.25,
+  "chunks": [
+    {
+      "id": "qk_-296_180",
+      "bbox": [-74.0, 45.0, -73.75, 45.25],
+      "path": "chunks/qk_-296_180.geojson"
+    }
+  ]
+}
