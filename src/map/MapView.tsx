@@ -158,32 +158,6 @@ export default function MapView(props: Props) {
   b.getNorth(),
 ];
 
-	const features: any[] = [];
-
-	if (props.showLidar) {
-		const lidar = await loadTilesForBBox("lidar", bbox, cacheRef.current);
-		features.push(...lidar);
-	}
-	if (props.showMnt) {
-		const mnt = await loadTilesForBBox("mnt", bbox, cacheRef.current);
-		features.push(...mnt);
-	}
-
-	const fc = { type: "FeatureCollection", features };
-	const src = map.getSource(SRC_TILES) as any;
-	if (src) {
-		src.setData(fc);
-	}
-
-	console.log("bbox =", bbox);
-	console.log("features loaded =", features.length);
-
-    // limiter: évite de charger à très petit zoom
-    if (map.getZoom() < 7) {
-      setTilesOnMap(map, []);
-      props.onSelectionChange([]);
-      return;
-    }
 
     const features: TileFeature[] = [];
 	
