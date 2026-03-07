@@ -16,6 +16,7 @@ type Props = {
 
 const SRC_TILES = "tiles-src";
 const LYR_TILES = "tiles-lyr";
+const LYR_TILES_OUTLINE = "tiles-lyr-outline";
 const LYR_TILES_SELECTED = "tiles-selected-lyr";
 const SRC_AOI = "aoi-src";
 const LYR_AOI = "aoi-lyr";
@@ -53,27 +54,42 @@ export default function MapView(props: Props) {
       });
     }
 
+    // Couche principale très visible
     if (!map.getLayer(LYR_TILES)) {
       map.addLayer({
         id: LYR_TILES,
-        type: "line",
+        type: "fill",
         source: SRC_TILES,
         paint: {
-          "line-color": "#ff5500",
-          "line-width": 2,
-          "line-opacity": 0.9,
+          "fill-color": "#ff5500",
+          "fill-opacity": 0.35,
         },
       });
     }
 
+    // Contour très visible
+    if (!map.getLayer(LYR_TILES_OUTLINE)) {
+      map.addLayer({
+        id: LYR_TILES_OUTLINE,
+        type: "line",
+        source: SRC_TILES,
+        paint: {
+          "line-color": "#cc0000",
+          "line-width": 3,
+          "line-opacity": 1,
+        },
+      });
+    }
+
+    // Sélection
     if (!map.getLayer(LYR_TILES_SELECTED)) {
       map.addLayer({
         id: LYR_TILES_SELECTED,
         type: "fill",
         source: SRC_TILES,
         paint: {
-          "fill-color": "#ff5500",
-          "fill-opacity": 0.25,
+          "fill-color": "#00ffff",
+          "fill-opacity": 0.45,
         },
         filter: ["==", ["get", "__selected"], true],
       });
@@ -226,6 +242,8 @@ export default function MapView(props: Props) {
   function setTilesOnMap(map: Map, features: TileFeature[]) {
     const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
+
+    console.log("setTilesOnMap features =", features.length, features[0]);
 
     src.setData({
       type: "FeatureCollection",
