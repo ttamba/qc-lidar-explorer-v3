@@ -45,6 +45,61 @@ export default function MapView(props: Props) {
     } as any;
   }, [props.basemaps]);
 
+  function ensureCustomSourcesAndLayers(map: Map) {
+    if (!map.getSource(SRC_TILES)) {
+      map.addSource(SRC_TILES, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+    }
+
+    if (!map.getLayer(LYR_TILES)) {
+      map.addLayer({
+        id: LYR_TILES,
+        type: "line",
+        source: SRC_TILES,
+        paint: {
+          "line-color": "#ff5500",
+          "line-width": 2,
+          "line-opacity": 0.9,
+        },
+      });
+    }
+
+    if (!map.getLayer(LYR_TILES_SELECTED)) {
+      map.addLayer({
+        id: LYR_TILES_SELECTED,
+        type: "fill",
+        source: SRC_TILES,
+        paint: {
+          "fill-color": "#ff5500",
+          "fill-opacity": 0.25,
+        },
+        filter: ["==", ["get", "__selected"], true],
+      });
+    }
+
+    if (!map.getSource(SRC_AOI)) {
+      map.addSource(SRC_AOI, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+    }
+
+    if (!map.getLayer(LYR_AOI)) {
+      map.addLayer({
+        id: LYR_AOI,
+        type: "line",
+        source: SRC_AOI,
+        paint: {
+          "line-color": "#0066ff",
+          "line-width": 2.5,
+          "line-opacity": 0.9,
+        },
+      });
+    }
+  }
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -58,50 +113,7 @@ export default function MapView(props: Props) {
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
     map.on("load", () => {
-      if (!map.getSource(SRC_TILES)) {
-        map.addSource(SRC_TILES, {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-
-        map.addLayer({
-          id: LYR_TILES,
-          type: "line",
-          source: SRC_TILES,
-          paint: {
-            "line-width": 1.5,
-            "line-opacity": 0.6,
-          },
-        });
-
-        map.addLayer({
-          id: LYR_TILES_SELECTED,
-          type: "fill",
-          source: SRC_TILES,
-          paint: {
-            "fill-opacity": 0.35,
-          },
-          filter: ["==", ["get", "__selected"], true],
-        });
-      }
-
-      if (!map.getSource(SRC_AOI)) {
-        map.addSource(SRC_AOI, {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-
-        map.addLayer({
-          id: LYR_AOI,
-          type: "line",
-          source: SRC_AOI,
-          paint: {
-            "line-width": 2.5,
-            "line-opacity": 0.9,
-          },
-        });
-      }
-
+      ensureCustomSourcesAndLayers(map);
       void refreshTiles(map);
     });
 
@@ -120,7 +132,13 @@ export default function MapView(props: Props) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+
     map.setStyle(styleSpec);
+
+    map.once("styledata", () => {
+      ensureCustomSourcesAndLayers(map);
+      void refreshTiles(map);
+    });
   }, [styleSpec]);
 
   useEffect(() => {
@@ -146,6 +164,8 @@ export default function MapView(props: Props) {
 
   async function refreshTiles(map: Map) {
     if (!map.isStyleLoaded()) return;
+
+    ensureCustomSourcesAndLayers(map);
 
     const b = map.getBounds();
     const bbox: [number, number, number, number] = [
