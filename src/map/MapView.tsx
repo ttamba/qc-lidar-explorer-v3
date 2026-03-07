@@ -151,7 +151,32 @@ export default function MapView(props: Props) {
     if (!map.isStyleLoaded()) return;
 
     const b = map.getBounds();
-    const bbox: [number, number, number, number] = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+	const bbox: [number, number, number, number] = [
+  b.getWest(),
+  b.getSouth(),
+  b.getEast(),
+  b.getNorth(),
+];
+
+	const features: any[] = [];
+
+	if (props.showLidar) {
+		const lidar = await loadTilesForBBox("lidar", bbox, cacheRef.current);
+		features.push(...lidar);
+	}
+	if (props.showMnt) {
+		const mnt = await loadTilesForBBox("mnt", bbox, cacheRef.current);
+		features.push(...mnt);
+	}
+
+	const fc = { type: "FeatureCollection", features };
+	const src = map.getSource(SRC_TILES) as any;
+	if (src) {
+		src.setData(fc);
+	}
+
+	console.log("bbox =", bbox);
+	console.log("features loaded =", features.length);
 
     // limiter: évite de charger à très petit zoom
     if (map.getZoom() < 7) {
@@ -161,6 +186,15 @@ export default function MapView(props: Props) {
     }
 
     const features: TileFeature[] = [];
+	
+	const fc = { type: "FeatureCollection", features };
+	
+	(map.getSource(SRC_TILES) as any).setData(fc);
+		
+	map.addSource(SRC_TILES, {
+     type: "geojson",
+     data: { type: "FeatureCollection", features: [] },
+    });
 
     if (props.showLidar) {
       const lidar = await loadTilesForBBox("lidar", bbox, cacheRef.current);
