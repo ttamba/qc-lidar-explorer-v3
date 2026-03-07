@@ -23,11 +23,9 @@ const LYR_AOI = "aoi-lyr";
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-
-  const cacheRef = useRef<globalThis.Map<string, TileFeature[]>>(new globalThis.Map()); // chunkPath -> features
+  const cacheRef = useRef<globalThis.Map<string, TileFeature[]>>(new globalThis.Map());
 
   const styleSpec = useMemo(() => {
-    // style minimal : raster OSM depuis basemaps.json si dispo, sinon fallback
     const osm = props.basemaps?.basemaps?.[0];
     const tiles = osm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"];
     const tileSize = osm?.tileSize ?? 256;
@@ -43,88 +41,92 @@ export default function MapView(props: Props) {
           attribution,
         },
       },
-      layers: [
-        { id: "osm", type: "raster", source: "osm" },
-      ],
+      layers: [{ id: "osm", type: "raster", source: "osm" }],
     } as any;
   }, [props.basemaps]);
 
-  // init map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: styleSpec,
-      center: [-73.6, 45.5], // Montréal approx
+      center: [-73.6, 45.5],
       zoom: 8,
     });
 
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
     map.on("load", () => {
-      // Tiles source/layers
-      map.addSource(SRC_TILES, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
+      if (!map.getSource(SRC_TILES)) {
+        map.addSource(SRC_TILES, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
 
-      map.addLayer({
-        id: LYR_TILES,
-        type: "line",
-        source: SRC_TILES,
-        paint: { "line-width": 1.5, "line-opacity": 0.6 },
-      });
+        map.addLayer({
+          id: LYR_TILES,
+          type: "line",
+          source: SRC_TILES,
+          paint: {
+            "line-width": 1.5,
+            "line-opacity": 0.6,
+          },
+        });
 
-      map.addLayer({
-        id: LYR_TILES_SELECTED,
-        type: "fill",
-        source: SRC_TILES,
-        paint: { "fill-opacity": 0.35 },
-        filter: ["==", ["get", "__selected"], true],
-      });
+        map.addLayer({
+          id: LYR_TILES_SELECTED,
+          type: "fill",
+          source: SRC_TILES,
+          paint: {
+            "fill-opacity": 0.35,
+          },
+          filter: ["==", ["get", "__selected"], true],
+        });
+      }
 
-      // AOI
-      map.addSource(SRC_AOI, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
-      });
+      if (!map.getSource(SRC_AOI)) {
+        map.addSource(SRC_AOI, {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
 
-      map.addLayer({
-        id: LYR_AOI,
-        type: "line",
-        source: SRC_AOI,
-        paint: { "line-width": 2.5, "line-opacity": 0.9 },
-      });
+        map.addLayer({
+          id: LYR_AOI,
+          type: "line",
+          source: SRC_AOI,
+          paint: {
+            "line-width": 2.5,
+            "line-opacity": 0.9,
+          },
+        });
+      }
 
-      // initial load tiles
       void refreshTiles(map);
     });
 
-    // throttle moveend
     const onMoveEnd = () => void refreshTiles(map);
     map.on("moveend", onMoveEnd);
 
     mapRef.current = map;
+
     return () => {
       map.off("moveend", onMoveEnd);
       map.remove();
       mapRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleSpec]);
 
-  // update style if basemap changes
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     map.setStyle(styleSpec);
   }, [styleSpec]);
 
-  // update AOI layer
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
+
     const src = map.getSource(SRC_AOI) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
 
@@ -133,53 +135,42 @@ export default function MapView(props: Props) {
       : { type: "FeatureCollection", features: [] };
 
     src.setData(fc as any);
-
-    // recompute selection when AOI changes
     void refreshSelection(map);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.aoi]);
 
-  // update product toggles
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     void refreshTiles(map);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.showLidar, props.showMnt]);
 
   async function refreshTiles(map: Map) {
     if (!map.isStyleLoaded()) return;
 
     const b = map.getBounds();
-	const bbox: [number, number, number, number] = [
-  b.getWest(),
-  b.getSouth(),
-  b.getEast(),
-  b.getNorth(),
-];
+    const bbox: [number, number, number, number] = [
+      b.getWest(),
+      b.getSouth(),
+      b.getEast(),
+      b.getNorth(),
+    ];
 
-
-    const features: TileFeature[] = [];
-	
-	const fc = { type: "FeatureCollection", features };
-	
-	(map.getSource(SRC_TILES) as any).setData(fc);
-		
-	map.addSource(SRC_TILES, {
-     type: "geojson",
-     data: { type: "FeatureCollection", features: [] },
-    });
+    const tiles: TileFeature[] = [];
 
     if (props.showLidar) {
       const lidar = await loadTilesForBBox("lidar", bbox, cacheRef.current);
-      features.push(...lidar);
-    }
-    if (props.showMnt) {
-      const mnt = await loadTilesForBBox("mnt", bbox, cacheRef.current);
-      features.push(...mnt);
+      tiles.push(...lidar);
     }
 
-    setTilesOnMap(map, features);
+    if (props.showMnt) {
+      const mnt = await loadTilesForBBox("mnt", bbox, cacheRef.current);
+      tiles.push(...mnt);
+    }
+
+    console.log("bbox =", bbox);
+    console.log("tiles loaded =", tiles.length);
+
+    setTilesOnMap(map, tiles);
     await refreshSelection(map);
   }
 
@@ -192,20 +183,34 @@ export default function MapView(props: Props) {
 
     const selected = props.aoi ? intersectAoiWithTiles(props.aoi, tiles) : [];
 
-    // marquage pour style (fill sur sélection)
     const marked = tiles.map((t) => ({
       ...t,
-      properties: { ...t.properties, __selected: selected.some((s) => s.properties.tile_id === t.properties.tile_id && s.properties.product === t.properties.product) },
-    })) as any;
+      properties: {
+        ...t.properties,
+        __selected: selected.some(
+          (s) =>
+            s.properties.tile_id === t.properties.tile_id &&
+            s.properties.product === t.properties.product
+        ),
+      },
+    })) as TileFeature[];
 
-    src.setData({ type: "FeatureCollection", features: marked } as any);
+    src.setData({
+      type: "FeatureCollection",
+      features: marked,
+    } as any);
+
     props.onSelectionChange(selected);
   }
 
   function setTilesOnMap(map: Map, features: TileFeature[]) {
     const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-    src.setData({ type: "FeatureCollection", features } as any);
+
+    src.setData({
+      type: "FeatureCollection",
+      features,
+    } as any);
   }
 
   return <div ref={containerRef} className="map" />;
