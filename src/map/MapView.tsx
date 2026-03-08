@@ -54,7 +54,6 @@ export default function MapView(props: Props) {
       });
     }
 
-    // Couche principale très visible
     if (!map.getLayer(LYR_TILES)) {
       map.addLayer({
         id: LYR_TILES,
@@ -67,7 +66,6 @@ export default function MapView(props: Props) {
       });
     }
 
-    // Contour très visible
     if (!map.getLayer(LYR_TILES_OUTLINE)) {
       map.addLayer({
         id: LYR_TILES_OUTLINE,
@@ -81,7 +79,6 @@ export default function MapView(props: Props) {
       });
     }
 
-    // Sélection
     if (!map.getLayer(LYR_TILES_SELECTED)) {
       map.addLayer({
         id: LYR_TILES_SELECTED,
@@ -129,7 +126,7 @@ export default function MapView(props: Props) {
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
     map.on("load", () => {
-	 (window as any).__map = map;
+      (window as any).__map = map;
       ensureCustomSourcesAndLayers(map);
       void refreshTiles(map);
     });
@@ -170,7 +167,14 @@ export default function MapView(props: Props) {
       : { type: "FeatureCollection", features: [] };
 
     src.setData(fc as any);
-    void refreshSelection(map);
+
+    // recalcul de sélection à partir des tuiles courantes
+    const tilesSrc = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
+    if (tilesSrc) {
+      const current = ((tilesSrc as any)._data?.geojson ?? (tilesSrc as any)._data) as TileFC | undefined;
+      const tiles = (current?.features ?? []) as TileFeature[];
+      void refreshSelection(map, tiles);
+    }
   }, [props.aoi]);
 
   useEffect(() => {
@@ -208,15 +212,12 @@ export default function MapView(props: Props) {
     console.log("tiles loaded =", tiles.length);
 
     setTilesOnMap(map, tiles);
-    await refreshSelection(map);
+    await refreshSelection(map, tiles);
   }
 
-  async function refreshSelection(map: Map) {
+  async function refreshSelection(map: Map, tiles: TileFeature[]) {
     const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
-
-    const current = (src as any)._data as TileFC | undefined;
-    const tiles = (current?.features ?? []) as TileFeature[];
 
     const selected = props.aoi ? intersectAoiWithTiles(props.aoi, tiles) : [];
 
