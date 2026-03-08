@@ -129,6 +129,7 @@ export default function MapView(props: Props) {
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
     map.on("load", () => {
+	 (window as any).__map = map;
       ensureCustomSourcesAndLayers(map);
       void refreshTiles(map);
     });
