@@ -1,35 +1,41 @@
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
+import { chain } from "stream-chain";
+import { parser } from "stream-json";
+import { pick } from "stream-json/filters/Pick.js";
+import { streamArray } from "stream-json/streamers/StreamArray.js";
 
-const CHUNK_SIZE_DEG = 0.25;
+const ROOT = process.cwd();
 
-// ---------- utils ----------
+const LIDAR_SRC = path.join(ROOT, "data", "lidar_tuiles.geojson");
+const MNT_SRC = path.join(ROOT, "data", "mnt_tuiles.geojson");
 
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true });
+const OUT_LIDAR = path.join(ROOT, "public", "index", "lidar");
+const OUT_MNT = path.join(ROOT, "public", "index", "mnt");
+
+const CHUNK_SIZE = 0.25;
+
+function ensureDir(p) {
+  fs.mkdirSync(p, { recursive: true });
 }
 
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+function clearDir(p) {
+  if (!fs.existsSync(p)) return;
+  fs.rmSync(p, { recursive: true, force: true });
 }
 
-function writeJson(filePath, data) {
-  ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+function chunkKey(lon, lat) {
+  return `qk_${Math.round(lon * 4)}_${Math.round(lat * 4)}`;
 }
 
-function roundCoord(v, n = 6) {
-  return Number(v.toFixed(n));
-}
-
-function featureBBox(feature) {
-  const geom = feature?.geometry;
-  if (!geom) throw new Error("Feature sans geometry");
+function bbox(feature) {
+  const geom = feature.geometry;
+  if (!geom) throw new Error("Feature sans géométrie");
 
   let coords = [];
-
   if (geom.type === "Polygon") {
-    coords = geom.coordinates.flat(1);
+    coords = geom.coordinates.flat();
   } else if (geom.type === "MultiPolygon") {
     coords = geom.coordinates.flat(2);
   } else {
@@ -54,16 +60,21 @@ function featureBBox(feature) {
 function normalizeFeature(feature, product) {
   const props = { ...(feature.properties || {}) };
 
-  if (!props.tile_id) {
-    props.tile_id =
-      props.id ||
-      props.tile ||
-      props.name ||
-      props.nom ||
-      `tile_${Math.random().toString(36).slice(2, 10)}`;
-  }
-
   props.product = product;
+  props.tile_id =
+    props.tile_id ||
+    props.NOM_TUILE ||
+    props.UUID ||
+    props.id ||
+    `tile_${Math.random().toString(36).slice(2, 10)}`;
+
+  props.url =
+    props.url ||
+    props.TELECHARGEMENT_TUILE ||
+    props.URL ||
+    "";
+
+  props.provider = props.provider || "QC";
 
   return {
     type: "Feature",
@@ -72,111 +83,139 @@ function normalizeFeature(feature, product) {
   };
 }
 
-function chunkId(minLon, minLat) {
-  // même logique que votre exemple existant
-  return `qk_${Math.round(minLon * 4)}_${Math.round(minLat * 4)}`;
+async function writeFeatureCollectionFromNdjson(ndjsonPath, outPath) {
+  ensureDir(path.dirname(outPath));
+
+  const ws = fs.createWriteStream(outPath, { encoding: "utf8" });
+  ws.write('{"type":"FeatureCollection","features":[');
+
+  let first = true;
+  const rl = readline.createInterface({
+    input: fs.createReadStream(ndjsonPath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    if (!first) ws.write(",");
+    ws.write(line);
+    first = false;
+  }
+
+  ws.write("]}");
+
+  await new Promise((resolve, reject) => {
+    ws.end(resolve);
+    ws.on("error", reject);
+  });
 }
 
-function chunkBounds(minLon, minLat, sizeDeg) {
-  return [
-    roundCoord(minLon),
-    roundCoord(minLat),
-    roundCoord(minLon + sizeDeg),
-    roundCoord(minLat + sizeDeg),
-  ];
-}
+async function buildIndex(srcFile, outDir, product) {
+  console.log(`Loading: ${srcFile}`);
 
-function featureIntersectsChunk(fBbox, cBbox) {
-  return !(
-    fBbox[2] < cBbox[0] ||
-    fBbox[0] > cBbox[2] ||
-    fBbox[3] < cBbox[1] ||
-    fBbox[1] > cBbox[3]
-  );
-}
+  const tmpDir = path.join(outDir, "_tmp");
+  clearDir(outDir);
+  ensureDir(outDir);
+  ensureDir(tmpDir);
+  ensureDir(path.join(outDir, "chunks"));
 
-function buildChunks(features, product, chunkSizeDeg = CHUNK_SIZE_DEG) {
-  const byChunk = new Map();
+  const chunkMeta = new Map();
+  const chunkStreams = new Map();
 
-  for (const f of features) {
-    const bbox = featureBBox(f);
-    const [minX, minY, maxX, maxY] = bbox;
+  const pipeline = chain([
+    fs.createReadStream(srcFile),
+    parser(),
+    pick({ filter: "features" }),
+    streamArray(),
+  ]);
 
-    const startLon = Math.floor(minX / chunkSizeDeg) * chunkSizeDeg;
-    const startLat = Math.floor(minY / chunkSizeDeg) * chunkSizeDeg;
-    const endLon = Math.floor(maxX / chunkSizeDeg) * chunkSizeDeg;
-    const endLat = Math.floor(maxY / chunkSizeDeg) * chunkSizeDeg;
+  let featureCount = 0;
 
-    for (let lon = startLon; lon <= endLon + 1e-9; lon += chunkSizeDeg) {
-      for (let lat = startLat; lat <= endLat + 1e-9; lat += chunkSizeDeg) {
-        const cb = chunkBounds(lon, lat, chunkSizeDeg);
-        if (!featureIntersectsChunk(bbox, cb)) continue;
+  for await (const { value } of pipeline) {
+    const f = normalizeFeature(value, product);
+    const [minX, minY, maxX, maxY] = bbox(f);
 
-        const id = chunkId(lon, lat);
-        if (!byChunk.has(id)) {
-          byChunk.set(id, {
+    const lonStart = Math.floor(minX / CHUNK_SIZE) * CHUNK_SIZE;
+    const latStart = Math.floor(minY / CHUNK_SIZE) * CHUNK_SIZE;
+    const lonEnd = Math.floor(maxX / CHUNK_SIZE) * CHUNK_SIZE;
+    const latEnd = Math.floor(maxY / CHUNK_SIZE) * CHUNK_SIZE;
+
+    for (let lon = lonStart; lon <= lonEnd + 1e-9; lon += CHUNK_SIZE) {
+      for (let lat = latStart; lat <= latEnd + 1e-9; lat += CHUNK_SIZE) {
+        const id = chunkKey(lon, lat);
+        const chunkPath = `chunks/${id}.json`;
+        const bboxChunk = [lon, lat, lon + CHUNK_SIZE, lat + CHUNK_SIZE];
+
+        if (!chunkMeta.has(id)) {
+          chunkMeta.set(id, {
             id,
-            bbox: cb,
-            path: `chunks/${id}.json`,
-            features: [],
+            bbox: bboxChunk,
+            path: chunkPath,
           });
         }
-        byChunk.get(id).features.push(f);
+
+        const tmpFile = path.join(tmpDir, `${id}.ndjson`);
+
+        if (!chunkStreams.has(id)) {
+          chunkStreams.set(
+            id,
+            fs.createWriteStream(tmpFile, { flags: "a", encoding: "utf8" })
+          );
+        }
+
+        chunkStreams.get(id).write(JSON.stringify(f) + "\n");
       }
+    }
+
+    featureCount++;
+    if (featureCount % 10000 === 0) {
+      console.log(`[${product}] features traitées: ${featureCount}`);
     }
   }
 
-  return [...byChunk.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-
-function writeIndex(product, sourceFile, outRoot) {
-  const fc = readJson(sourceFile);
-
-  if (fc.type !== "FeatureCollection" || !Array.isArray(fc.features)) {
-    throw new Error(`${sourceFile} doit être un FeatureCollection GeoJSON`);
-  }
-
-  const features = fc.features.map((f) => normalizeFeature(f, product));
-  const chunks = buildChunks(features, product, CHUNK_SIZE_DEG);
-
-  const productRoot = path.join(outRoot, product);
-  const chunksRoot = path.join(productRoot, "chunks");
-
-  ensureDir(chunksRoot);
-
-  for (const chunk of chunks) {
-    writeJson(path.join(productRoot, chunk.path), {
-      type: "FeatureCollection",
-      features: chunk.features,
+  for (const ws of chunkStreams.values()) {
+    await new Promise((resolve, reject) => {
+      ws.end(resolve);
+      ws.on("error", reject);
     });
   }
 
-  writeJson(path.join(productRoot, "grid.json"), {
-    version: new Date().toISOString().slice(0, 10),
-    chunkSizeDeg: CHUNK_SIZE_DEG,
-    chunks: chunks.map(({ id, bbox, path }) => ({ id, bbox, path })),
-  });
+  const chunks = [...chunkMeta.values()].sort((a, b) => a.id.localeCompare(b.id));
 
-  console.log(`[${product}] features=${features.length}, chunks=${chunks.length}`);
+  for (const chunk of chunks) {
+    const ndjsonPath = path.join(tmpDir, `${chunk.id}.ndjson`);
+    const outPath = path.join(outDir, chunk.path);
+    await writeFeatureCollectionFromNdjson(ndjsonPath, outPath);
+  }
+
+  fs.writeFileSync(
+    path.join(outDir, "grid.json"),
+    JSON.stringify(
+      {
+        version: new Date().toISOString().slice(0, 10),
+        chunkSizeDeg: CHUNK_SIZE,
+        chunks,
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  clearDir(tmpDir);
+
+  console.log(`[${product}] total features: ${featureCount}`);
+  console.log(`[${product}] total chunks: ${chunks.length}`);
 }
 
-// ---------- main ----------
-
-const ROOT = process.cwd();
-const DATA_DIR = path.join(ROOT, "data");
-const OUT_DIR = path.join(ROOT, "public", "index");
-
-const lidarSrc = path.join(DATA_DIR, "lidar_tiles.geojson");
-const mntSrc = path.join(DATA_DIR, "mnt_tiles.geojson");
-
-if (!fs.existsSync(lidarSrc)) {
-  throw new Error(`Fichier introuvable: ${lidarSrc}`);
+if (!fs.existsSync(LIDAR_SRC)) {
+  throw new Error(`Fichier introuvable: ${LIDAR_SRC}`);
 }
-if (!fs.existsSync(mntSrc)) {
-  throw new Error(`Fichier introuvable: ${mntSrc}`);
+if (!fs.existsSync(MNT_SRC)) {
+  throw new Error(`Fichier introuvable: ${MNT_SRC}`);
 }
 
-writeIndex("lidar", lidarSrc, OUT_DIR);
-writeIndex("mnt", mntSrc, OUT_DIR);
+await buildIndex(LIDAR_SRC, OUT_LIDAR, "lidar");
+await buildIndex(MNT_SRC, OUT_MNT, "mnt");
 
-console.log("Index complets générés dans public/index");
+console.log("Index generation complete");
