@@ -1,10 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { chain } from "stream-chain";
-import { parser } from "stream-json";
-import { pick } from "stream-json/filters/Pick.js";
-import { streamArray } from "stream-json/streamers/StreamArray.js";
+
+import streamChainPkg from "stream-chain";
+import streamJsonPkg from "stream-json";
+import pickPkg from "stream-json/filters/Pick.js";
+import streamArrayPkg from "stream-json/streamers/StreamArray.js";
+
+const { chain } = streamChainPkg;
+const { parser } = streamJsonPkg;
+const { pick } = pickPkg;
+const { streamArray } = streamArrayPkg;
 
 const ROOT = process.cwd();
 
