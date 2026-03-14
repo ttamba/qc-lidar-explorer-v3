@@ -25,6 +25,7 @@ export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cacheRef = useRef<globalThis.Map<string, TileFeature[]>>(new globalThis.Map());
+  const requestSeqRef = useRef(0);
 
   const styleSpec = useMemo(() => {
     const osm = props.basemaps?.basemaps?.[0];
@@ -168,7 +169,6 @@ export default function MapView(props: Props) {
 
     src.setData(fc as any);
 
-    // recalcul de sélection à partir des tuiles courantes
     const tilesSrc = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
     if (tilesSrc) {
       const current = ((tilesSrc as any)._data?.geojson ?? (tilesSrc as any)._data) as TileFC | undefined;
@@ -188,6 +188,15 @@ export default function MapView(props: Props) {
 
     ensureCustomSourcesAndLayers(map);
 
+    const requestId = ++requestSeqRef.current;
+
+    // Si rien n'est coché, on vide immédiatement la couche et on ignore tout résultat ancien
+    if (!props.showLidar && !props.showMnt) {
+      setTilesOnMap(map, []);
+      props.onSelectionChange([]);
+      return;
+    }
+
     const b = map.getBounds();
     const bbox: [number, number, number, number] = [
       b.getWest(),
@@ -200,13 +209,18 @@ export default function MapView(props: Props) {
 
     if (props.showLidar) {
       const lidar = await loadTilesForBBox("lidar", bbox, cacheRef.current);
+      // Si une requête plus récente a démarré, on abandonne ce résultat
+      if (requestId !== requestSeqRef.current) return;
       tiles.push(...lidar);
     }
 
     if (props.showMnt) {
       const mnt = await loadTilesForBBox("mnt", bbox, cacheRef.current);
+      if (requestId !== requestSeqRef.current) return;
       tiles.push(...mnt);
     }
+
+    if (requestId !== requestSeqRef.current) return;
 
     console.log("bbox =", bbox);
     console.log("tiles loaded =", tiles.length);
