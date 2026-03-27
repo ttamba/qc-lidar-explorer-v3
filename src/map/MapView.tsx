@@ -15,9 +15,13 @@ type Props = {
 };
 
 const SRC_TILES = "tiles-src";
+const SRC_TILE_LABELS = "tiles-labels-src";
+
 const LYR_TILES = "tiles-lyr";
 const LYR_TILES_OUTLINE = "tiles-lyr-outline";
 const LYR_TILES_SELECTED = "tiles-selected-lyr";
+const LYR_TILES_LABELS = "tiles-labels-lyr";
+
 const SRC_AOI = "aoi-src";
 const LYR_AOI = "aoi-lyr";
 
@@ -27,7 +31,6 @@ export default function MapView(props: Props) {
   const cacheRef = useRef<globalThis.Map<string, TileFeature[]>>(new globalThis.Map());
   const requestSeqRef = useRef(0);
 
-  // 🔥 refs pour éviter stale closure
   const showLidarRef = useRef(props.showLidar);
   const showMntRef = useRef(props.showMnt);
   const aoiRef = useRef(props.aoi);
@@ -78,12 +81,22 @@ export default function MapView(props: Props) {
       });
     }
 
+    if (!map.getSource(SRC_TILE_LABELS)) {
+      map.addSource(SRC_TILE_LABELS, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+    }
+
     if (!map.getLayer(LYR_TILES)) {
       map.addLayer({
         id: LYR_TILES,
         type: "fill",
         source: SRC_TILES,
-        paint: { "fill-color": "#ff5500", "fill-opacity": 0.35 },
+        paint: {
+          "fill-color": "#ff5500",
+          "fill-opacity": 0.35,
+        },
       });
     }
 
@@ -92,7 +105,11 @@ export default function MapView(props: Props) {
         id: LYR_TILES_OUTLINE,
         type: "line",
         source: SRC_TILES,
-        paint: { "line-color": "#cc0000", "line-width": 3 },
+        paint: {
+          "line-color": "#cc0000",
+          "line-width": 3,
+          "line-opacity": 1,
+        },
       });
     }
 
@@ -101,8 +118,38 @@ export default function MapView(props: Props) {
         id: LYR_TILES_SELECTED,
         type: "fill",
         source: SRC_TILES,
-        paint: { "fill-color": "#00ffff", "fill-opacity": 0.45 },
+        paint: {
+          "fill-color": "#00ffff",
+          "fill-opacity": 0.45,
+        },
         filter: ["==", ["get", "__selected"], true],
+      });
+    }
+
+    if (!map.getLayer(LYR_TILES_LABELS)) {
+      map.addLayer({
+        id: LYR_TILES_LABELS,
+        type: "symbol",
+        source: SRC_TILE_LABELS,
+        minzoom: 11,
+        layout: {
+          "text-field": [
+            "coalesce",
+            ["get", "NOM_TUILE"],
+            ["get", "tile_id"],
+            ["get", "name"],
+            "",
+          ],
+          "text-size": 11,
+          "text-anchor": "center",
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+        },
+        paint: {
+          "text-color": "#111111",
+          "text-halo-color": "#ffffff",
+          "text-halo-width": 1.2,
+        },
       });
     }
 
@@ -118,7 +165,11 @@ export default function MapView(props: Props) {
         id: LYR_AOI,
         type: "line",
         source: SRC_AOI,
-        paint: { "line-color": "#0066ff", "line-width": 2.5 },
+        paint: {
+          "line-color": "#0066ff",
+          "line-width": 2.5,
+          "line-opacity": 0.9,
+        },
       });
     }
   }
@@ -126,11 +177,96 @@ export default function MapView(props: Props) {
   function setTileLayersVisibility(map: Map, visible: boolean) {
     const visibility = visible ? "visible" : "none";
 
-    [LYR_TILES, LYR_TILES_OUTLINE, LYR_TILES_SELECTED].forEach((id) => {
+    [LYR_TILES, LYR_TILES_OUTLINE, LYR_TILES_SELECTED, LYR_TILES_LABELS].forEach((id) => {
       if (map.getLayer(id)) {
         map.setLayoutProperty(id, "visibility", visibility);
       }
     });
+  }
+
+  function getDownloadUrl(feature: any): string | null {
+    const p = (feature?.properties ?? {}) as Record<string, any>;
+    return (
+      p.TELECHARGEMENT_TUILE ??
+      p.telechargement_tuile ??
+      p.download_url ??
+      p.url ??
+      null
+    );
+  }
+
+  function openTileDownload(feature: any) {
+    const url = getDownloadUrl(feature);
+    if (!url || typeof url !== "string") return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function computeGeometryCenter(geometry: any): [number, number] | null {
+    if (!geometry || !geometry.type || !geometry.coordinates) return null;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const visit = (coords: any) => {
+      if (!Array.isArray(coords)) return;
+
+      if (
+        coords.length >= 2 &&
+        typeof coords[0] === "number" &&
+        typeof coords[1] === "number"
+      ) {
+        const x = coords[0];
+        const y = coords[1];
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+        return;
+      }
+
+      for (const c of coords) visit(c);
+    };
+
+    visit(geometry.coordinates);
+
+    if (
+      !Number.isFinite(minX) ||
+      !Number.isFinite(minY) ||
+      !Number.isFinite(maxX) ||
+      !Number.isFinite(maxY)
+    ) {
+      return null;
+    }
+
+    return [(minX + maxX) / 2, (minY + maxY) / 2];
+  }
+
+  function updateLabelSource(map: Map, features: TileFeature[]) {
+    const src = map.getSource(SRC_TILE_LABELS) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
+    const pointFeatures = features
+      .map((f) => {
+        const center = computeGeometryCenter((f as any).geometry);
+        if (!center) return null;
+
+        return {
+          type: "Feature",
+          properties: { ...(f.properties ?? {}) },
+          geometry: {
+            type: "Point",
+            coordinates: center,
+          },
+        };
+      })
+      .filter(Boolean);
+
+    src.setData({
+      type: "FeatureCollection",
+      features: pointFeatures as any[],
+    } as any);
   }
 
   useEffect(() => {
@@ -148,9 +284,36 @@ export default function MapView(props: Props) {
     map.on("load", () => {
       ensureCustomSourcesAndLayers(map);
       void refreshTiles(map);
+
+      map.on("click", LYR_TILES, (e) => {
+        const feature = e.features?.[0];
+        if (!feature) return;
+        openTileDownload(feature);
+      });
+
+      map.on("click", LYR_TILES_LABELS, (e) => {
+        const feature = e.features?.[0];
+        if (!feature) return;
+        openTileDownload(feature);
+      });
+
+      map.on("mouseenter", LYR_TILES, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", LYR_TILES, () => {
+        map.getCanvas().style.cursor = "";
+      });
+
+      map.on("mouseenter", LYR_TILES_LABELS, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", LYR_TILES_LABELS, () => {
+        map.getCanvas().style.cursor = "";
+      });
     });
 
-    // 🔥 handler stable
     map.on("moveend", () => {
       void refreshTiles(map);
     });
@@ -179,7 +342,9 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    const src = map.getSource(SRC_AOI) as maplibregl.GeoJSONSource;
+    const src = map.getSource(SRC_AOI) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+
     const aoi = aoiRef.current;
 
     src.setData(
@@ -245,7 +410,8 @@ export default function MapView(props: Props) {
   }
 
   async function refreshSelection(map: Map, tiles: TileFeature[]) {
-    const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource;
+    const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
 
     const aoi = aoiRef.current;
     const selected = aoi ? intersectAoiWithTiles(aoi, tiles) : [];
@@ -260,27 +426,31 @@ export default function MapView(props: Props) {
             s.properties.product === t.properties.product
         ),
       },
-    }));
+    })) as TileFeature[];
 
     currentTilesRef.current = marked;
 
     src.setData({
       type: "FeatureCollection",
       features: marked,
-    });
+    } as any);
 
+    updateLabelSource(map, marked);
     onSelectionChangeRef.current(selected);
   }
 
   function setTilesOnMap(map: Map, features: TileFeature[]) {
-    const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource;
+    const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
 
     currentTilesRef.current = features;
 
     src.setData({
       type: "FeatureCollection",
       features,
-    });
+    } as any);
+
+    updateLabelSource(map, features);
   }
 
   return <div ref={containerRef} className="map" />;
