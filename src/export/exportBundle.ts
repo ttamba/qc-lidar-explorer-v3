@@ -4,7 +4,6 @@ import type { AoiFeature, TileFeature } from "../types";
 
 function getTileUrl(tile: TileFeature): string | null {
   const p = tile.properties as Record<string, any>;
-
   return (
     p.TELECHARGEMENT_TUILE ??
     p.telechargement_tuile ??
@@ -14,33 +13,13 @@ function getTileUrl(tile: TileFeature): string | null {
   );
 }
 
-function getTileName(tile: TileFeature, index: number): string {
-  const p = tile.properties as Record<string, any>;
-
-  const rawName =
-    p.NOM_TUILE ??
-    p.nom_tuile ??
-    p.tile_id ??
-    `tile_${index + 1}`;
-
-  return String(rawName).replace(/[<>:"/\\|?*]+/g, "_");
-}
-
-function getExtensionFromUrl(url: string): string {
-  const cleanUrl = url.split("?")[0].split("#")[0];
-  const match = cleanUrl.match(/\.([a-zA-Z0-9]+)$/);
-  return match ? match[1].toLowerCase() : "bin";
-}
-
 function toCsv(tiles: TileFeature[]) {
-  const header = ["product", "tile_id", "NOM_TUILE", "url", "year", "provider"];
-
+  const header = ["product", "tile_id", "url", "year", "provider"];
   const rows = tiles.map((t) => {
     const p = t.properties as Record<string, any>;
     return [
       p.product ?? "",
-      p.tile_id ?? "",
-      p.NOM_TUILE ?? p.nom_tuile ?? "",
+      p.tile_id ?? p.NOM_TUILE ?? "",
       getTileUrl(t) ?? "",
       p.year ?? "",
       p.provider ?? "",
@@ -55,81 +34,50 @@ function toCsv(tiles: TileFeature[]) {
   return [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
 }
 
-function readmeQgisMd(total: number, downloaded: number, failed: number) {
-  return `# Export QC LiDAR/MNT — Données téléchargées
+function readmeQgisMd(tilesCount: number) {
+  return `# Export QC LiDAR/MNT — Sélection de tuiles
 
 Contenu:
 - aoi.geojson
 - selected_tiles.geojson
 - tiles.csv
-- downloaded_tiles/...
-- failed_downloads.csv (si applicable)
 - README_QGIS.md
 
 ## Résumé
-- Tuiles sélectionnées: ${total}
-- Tuiles téléchargées: ${downloaded}
-- Tuiles en échec: ${failed}
+- Tuiles sélectionnées: ${tilesCount}
 
-## Notes
-- Cet export tente de télécharger automatiquement les fichiers sources des tuiles intersectant l'AOI.
-- Si certaines tuiles échouent, vérifier les restrictions réseau/CORS ou relancer l'export.
+## Téléchargement des données
+Les fichiers sources (LAZ/TIF) sont téléchargés directement par le navigateur, un par un,
+pour éviter les plantages mémoire liés à la création d'un gros ZIP côté client.
 
-## Étapes (QGIS)
-1. Ouvrir \`aoi.geojson\`.
-2. Ouvrir les données téléchargées dans \`downloaded_tiles/\`.
-3. Découper selon l'AOI si nécessaire.
-
-## Découpage
-### MNT (raster)
-- Utiliser GDAL: "Découper raster par masque" avec l’AOI.
-
-### LiDAR (LAZ/LAS)
-- Utiliser PDAL avec \`filters.crop\` sur le polygone AOI.
+## Étapes QGIS
+1. Ouvrir aoi.geojson
+2. Ouvrir selected_tiles.geojson
+3. Utiliser les fichiers téléchargés localement
 `;
 }
 
-async function fetchTileAsBlob(url: string): Promise<Blob> {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${response.statusText}`);
-  }
-
-  return await response.blob();
-}
-
-function failuresToCsv(
-  failures: Array<{ product: string; tile_id: string; name: string; url: string; error: string }>
-) {
-  const header = ["product", "tile_id", "name", "url", "error"];
-
-  const rows = failures.map((f) => [
-    f.product,
-    f.tile_id,
-    f.name,
-    f.url,
-    f.error,
-  ]);
-
-  const esc = (v: any) => {
-    const s = String(v ?? "");
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-
-  return [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
+function triggerDirectDownload(url: string, delayMs: number) {
+  setTimeout(() => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, delayMs);
 }
 
 export async function exportBundle(params: { aoi: AoiFeature | null; tiles: TileFeature[] }) {
   const { aoi, tiles } = params;
-
   if (!aoi || tiles.length === 0) {
     alert("Aucune AOI ou aucune tuile sélectionnée.");
     return;
   }
 
   const zip = new JSZip();
-  const dataFolder = zip.folder("downloaded_tiles");
 
   zip.file(
     "aoi.geojson",
@@ -142,72 +90,29 @@ export async function exportBundle(params: { aoi: AoiFeature | null; tiles: Tile
   );
 
   zip.file("tiles.csv", toCsv(tiles));
-
-  const failures: Array<{
-    product: string;
-    tile_id: string;
-    name: string;
-    url: string;
-    error: string;
-  }> = [];
-
-  let downloadedCount = 0;
-
-  for (let i = 0; i < tiles.length; i++) {
-    const tile = tiles[i];
-    const p = tile.properties as Record<string, any>;
-
-    const url = getTileUrl(tile);
-    const tileName = getTileName(tile, i);
-    const product = String(p.product ?? "unknown");
-    const tileId = String(p.tile_id ?? tileName);
-
-    if (!url) {
-      failures.push({
-        product,
-        tile_id: tileId,
-        name: tileName,
-        url: "",
-        error: "URL de téléchargement absente",
-      });
-      continue;
-    }
-
-    try {
-      const blob = await fetchTileAsBlob(url);
-      const ext = getExtensionFromUrl(url);
-      const fileName = `${tileName}.${ext}`;
-
-      dataFolder?.file(fileName, blob);
-      downloadedCount += 1;
-    } catch (err: any) {
-      failures.push({
-        product,
-        tile_id: tileId,
-        name: tileName,
-        url,
-        error: err?.message ?? "Erreur inconnue",
-      });
-    }
-  }
-
-  if (failures.length > 0) {
-    zip.file("failed_downloads.csv", failuresToCsv(failures));
-  }
-
-  zip.file(
-    "README_QGIS.md",
-    readmeQgisMd(tiles.length, downloadedCount, failures.length)
-  );
+  zip.file("README_QGIS.md", readmeQgisMd(tiles.length));
 
   const blob = await zip.generateAsync({ type: "blob" });
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-  saveAs(blob, `qc_lidar_mnt_data_${stamp}.zip`);
+  saveAs(blob, `qc_lidar_mnt_selection_${stamp}.zip`);
 
-  if (failures.length > 0) {
-    alert(
-      `${downloadedCount} tuile(s) téléchargée(s), ${failures.length} en échec.\n` +
-        `Consulte failed_downloads.csv dans le ZIP.`
-    );
+  const validUrls = tiles
+    .map((t) => getTileUrl(t))
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
+
+  if (validUrls.length === 0) {
+    alert("Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.");
+    return;
   }
+
+  const msg =
+    `Le ZIP d'inventaire a été généré.\n\n` +
+    `${validUrls.length} téléchargement(s) direct(s) vont être lancés.\n` +
+    `Selon le navigateur, vous devrez peut-être autoriser les téléchargements multiples pour ce site.`;
+
+  alert(msg);
+
+  validUrls.forEach((url, i) => {
+    triggerDirectDownload(url, i * 1200);
+  });
 }
