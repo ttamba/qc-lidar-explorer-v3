@@ -15,6 +15,7 @@ function getTileUrl(tile: TileFeature): string | null {
 
 function toCsv(tiles: TileFeature[]) {
   const header = ["product", "tile_id", "url", "year", "provider"];
+
   const rows = tiles.map((t) => {
     const p = t.properties as Record<string, any>;
     return [
@@ -46,32 +47,23 @@ Contenu:
 ## Résumé
 - Tuiles sélectionnées: ${tilesCount}
 
-## Téléchargement des données
-Les fichiers sources (LAZ/TIF) sont téléchargés directement par le navigateur, un par un,
-pour éviter les plantages mémoire liés à la création d'un gros ZIP côté client.
+## Téléchargement
+Les fichiers sources sont ouverts dans de nouveaux onglets/fenêtres
+pour éviter les plantages ou remplacements de l'application dans l'onglet principal.
 
-## Étapes QGIS
-1. Ouvrir aoi.geojson
-2. Ouvrir selected_tiles.geojson
-3. Utiliser les fichiers téléchargés localement
+Selon le navigateur, vous devrez peut-être autoriser les popups/téléchargements multiples.
 `;
 }
 
-function triggerDirectDownload(url: string, delayMs: number) {
+function openUrlInNewTab(url: string, delayMs: number) {
   setTimeout(() => {
-    const a = document.createElement("a");
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.download = "";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    window.open(url, "_blank", "noopener,noreferrer");
   }, delayMs);
 }
 
 export async function exportBundle(params: { aoi: AoiFeature | null; tiles: TileFeature[] }) {
   const { aoi, tiles } = params;
+
   if (!aoi || tiles.length === 0) {
     alert("Aucune AOI ou aucune tuile sélectionnée.");
     return;
@@ -105,14 +97,13 @@ export async function exportBundle(params: { aoi: AoiFeature | null; tiles: Tile
     return;
   }
 
-  const msg =
+  alert(
     `Le ZIP d'inventaire a été généré.\n\n` +
-    `${validUrls.length} téléchargement(s) direct(s) vont être lancés.\n` +
-    `Selon le navigateur, vous devrez peut-être autoriser les téléchargements multiples pour ce site.`;
-
-  alert(msg);
+      `${validUrls.length} fichier(s) vont être ouverts dans de nouveaux onglets.\n` +
+      `Autorisez les popups/téléchargements multiples si le navigateur le demande.`
+  );
 
   validUrls.forEach((url, i) => {
-    triggerDirectDownload(url, i * 1200);
+    openUrlInNewTab(url, i * 1000);
   });
 }
