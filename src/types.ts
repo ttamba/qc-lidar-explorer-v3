@@ -4,11 +4,17 @@ export type AoiFeature = Feature<Polygon | MultiPolygon>;
 export type AnyFeature = Feature<Geometry, Record<string, any>>;
 
 export type TileProps = {
-  tile_id: string;
   product: "lidar" | "mnt";
-  url: string;
+
+  tile_id?: string;
+  NOM_TUILE?: string;
+
+  TELECHARGEMENT_TUILE?: string;
+
   year?: number;
   provider?: string;
+
+  [key: string]: any;
 };
 
 export type TileFeature = Feature<Polygon | MultiPolygon, TileProps>;

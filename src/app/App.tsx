@@ -15,18 +15,23 @@ export default function App() {
   const [showMnt, setShowMnt] = useState(true);
 
   const selectionStats = useMemo(() => {
-    const byProduct = selectedTiles.reduce(
-      (acc, t) => {
-        acc[t.properties.product] += 1;
-        return acc;
-      },
-      { lidar: 0, mnt: 0 }
-    );
-    return {
-      total: selectedTiles.length,
-      ...byProduct,
-    };
-  }, [selectedTiles]);
+  const byProduct = selectedTiles.reduce(
+    (acc, t) => {
+      const product = String(t.properties?.product ?? "").toLowerCase();
+
+      if (product === "lidar") acc.lidar += 1;
+      else if (product === "mnt") acc.mnt += 1;
+
+      return acc;
+    },
+    { lidar: 0, mnt: 0 }
+  );
+
+  return {
+    total: selectedTiles.length,
+    ...byProduct,
+  };
+}, [selectedTiles]);
 
   return (
     <div className="layout">
