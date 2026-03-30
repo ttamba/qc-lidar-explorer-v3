@@ -16,13 +16,12 @@ type Props = {
 
 const SRC_TILES = "tiles-src";
 const SRC_TILE_LABELS = "tiles-labels-src";
+const SRC_AOI = "aoi-src";
 
 const LYR_TILES = "tiles-lyr";
 const LYR_TILES_OUTLINE = "tiles-lyr-outline";
 const LYR_TILES_SELECTED = "tiles-selected-lyr";
 const LYR_TILES_LABELS = "tiles-labels-lyr";
-
-const SRC_AOI = "aoi-src";
 const LYR_AOI = "aoi-lyr";
 
 export default function MapView(props: Props) {
@@ -83,6 +82,13 @@ export default function MapView(props: Props) {
 
     if (!map.getSource(SRC_TILE_LABELS)) {
       map.addSource(SRC_TILE_LABELS, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+    }
+
+    if (!map.getSource(SRC_AOI)) {
+      map.addSource(SRC_AOI, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
@@ -150,13 +156,6 @@ export default function MapView(props: Props) {
           "text-halo-color": "#ffffff",
           "text-halo-width": 1.2,
         },
-      });
-    }
-
-    if (!map.getSource(SRC_AOI)) {
-      map.addSource(SRC_AOI, {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: [] },
       });
     }
 
@@ -342,18 +341,22 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    const src = map.getSource(SRC_AOI) as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
+    try {
+      const src = map.getSource(SRC_AOI) as maplibregl.GeoJSONSource | undefined;
+      if (!src) return;
 
-    const aoi = aoiRef.current;
+      const aoi = aoiRef.current;
 
-    src.setData(
-      aoi
-        ? { type: "FeatureCollection", features: [aoi] }
-        : { type: "FeatureCollection", features: [] }
-    );
+      src.setData(
+        aoi
+          ? { type: "FeatureCollection", features: [aoi] }
+          : { type: "FeatureCollection", features: [] }
+      );
 
-    void refreshSelection(map, currentTilesRef.current);
+      void refreshSelection(map, currentTilesRef.current);
+    } catch (err) {
+      console.error("Erreur lors du chargement de l'AOI :", err);
+    }
   }, [props.aoi]);
 
   useEffect(() => {
@@ -413,18 +416,31 @@ export default function MapView(props: Props) {
     const src = map.getSource(SRC_TILES) as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
 
-    const aoi = aoiRef.current;
-    const selected = aoi ? intersectAoiWithTiles(aoi, tiles) : [];
+    let selected: TileFeature[] = [];
+
+    try {
+      const aoi = aoiRef.current;
+      selected = aoi ? intersectAoiWithTiles(aoi, tiles) : [];
+    } catch (err) {
+      console.error("Erreur dans intersectAoiWithTiles :", err);
+      selected = [];
+    }
 
     const marked = tiles.map((t) => ({
       ...t,
       properties: {
         ...t.properties,
-        __selected: selected.some(
-          (s) =>
-            s.properties.tile_id === t.properties.tile_id &&
-            s.properties.product === t.properties.product
-        ),
+        __selected: selected.some((s) => {
+          const sProps = s.properties as Record<string, any>;
+          const tProps = t.properties as Record<string, any>;
+
+          const sId = sProps.tile_id ?? sProps.NOM_TUILE ?? "";
+          const tId = tProps.tile_id ?? tProps.NOM_TUILE ?? "";
+          const sProduct = String(sProps.product ?? "").toLowerCase();
+          const tProduct = String(tProps.product ?? "").toLowerCase();
+
+          return sId === tId && sProduct === tProduct;
+        }),
       },
     })) as TileFeature[];
 

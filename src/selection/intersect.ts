@@ -8,12 +8,7 @@ function isPolygonLikeFeature(feature: any): boolean {
 
 function getTileId(tile: TileFeature): string {
   const props = tile?.properties as Record<string, any> | undefined;
-
-  return String(
-    props?.tile_id ??
-    props?.NOM_TUILE ??
-    "unknown"
-  );
+  return String(props?.tile_id ?? props?.NOM_TUILE ?? "unknown");
 }
 
 function getProduct(tile: TileFeature): string {
@@ -51,11 +46,7 @@ export function intersectAoiWithTiles(
 
   return selected.filter((tile) => {
     const key = `${getProduct(tile)}::${getTileId(tile)}`;
-
-    if (seen.has(key)) {
-      return false;
-    }
-
+    if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
