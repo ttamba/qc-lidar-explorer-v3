@@ -1,33 +1,25 @@
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import type { AoiFeature, TileFeature } from "../types";
-
-function getTileUrl(tile: TileFeature): string | null {
-  const p = tile.properties as Record<string, any>;
-  return (
-    p.TELECHARGEMENT_TUILE ??
-    p.telechargement_tuile ??
-    p.url ??
-    p.download_url ??
-    null
-  );
-}
+import { normalizeTile } from "../utils/normalizeTile";
 
 function toCsv(tiles: TileFeature[]) {
-  const header = ["product", "tile_id", "url", "year", "provider"];
+  const header = ["product", "tile_id", "name", "url", "year", "provider"];
 
-  const rows = tiles.map((t) => {
-    const p = t.properties as Record<string, any>;
+  const rows = tiles.map((tile) => {
+    const t = normalizeTile(tile);
+
     return [
-      p.product ?? "",
-      p.tile_id ?? p.NOM_TUILE ?? "",
-      getTileUrl(t) ?? "",
-      p.year ?? "",
-      p.provider ?? "",
+      t.product,
+      t.id,
+      t.name,
+      t.url,
+      t.year ?? "",
+      t.provider ?? "",
     ];
   });
 
-  const esc = (v: any) => {
+  const esc = (v: unknown) => {
     const s = String(v ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
@@ -52,6 +44,12 @@ Les fichiers sources sont ouverts dans de nouveaux onglets/fenêtres
 pour éviter les plantages ou remplacements de l'application dans l'onglet principal.
 
 Selon le navigateur, vous devrez peut-être autoriser les popups/téléchargements multiples.
+
+## Étapes QGIS
+1. Ouvrir aoi.geojson
+2. Ouvrir selected_tiles.geojson
+3. Télécharger les fichiers référencés
+4. Charger les données dans QGIS
 `;
 }
 
@@ -89,8 +87,8 @@ export async function exportBundle(params: { aoi: AoiFeature | null; tiles: Tile
   saveAs(blob, `qc_lidar_mnt_selection_${stamp}.zip`);
 
   const validUrls = tiles
-    .map((t) => getTileUrl(t))
-    .filter((u): u is string => typeof u === "string" && u.length > 0);
+    .map((tile) => normalizeTile(tile).url)
+    .filter((url): url is string => typeof url === "string" && url.length > 0);
 
   if (validUrls.length === 0) {
     alert("Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.");

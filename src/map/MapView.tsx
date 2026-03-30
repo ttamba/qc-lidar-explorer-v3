@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { AoiFeature, BasemapConfig, TileFeature } from "../types";
 import { loadTilesForBBox } from "../index/loadChunks";
 import { intersectAoiWithTiles } from "../selection/intersect";
+import { normalizeTile } from "../utils/normalizeTile";
 
 type Props = {
   basemaps: BasemapConfig | null;
@@ -139,13 +140,7 @@ export default function MapView(props: Props) {
         source: SRC_TILE_LABELS,
         minzoom: 11,
         layout: {
-          "text-field": [
-            "coalesce",
-            ["get", "NOM_TUILE"],
-            ["get", "tile_id"],
-            ["get", "name"],
-            "",
-          ],
+          "text-field": ["coalesce", ["get", "label_text"], ""],
           "text-size": 11,
           "text-anchor": "center",
           "text-allow-overlap": false,
@@ -183,21 +178,13 @@ export default function MapView(props: Props) {
     });
   }
 
-  function getDownloadUrl(feature: any): string | null {
-    const p = (feature?.properties ?? {}) as Record<string, any>;
-    return (
-      p.TELECHARGEMENT_TUILE ??
-      p.telechargement_tuile ??
-      p.download_url ??
-      p.url ??
-      null
-    );
-  }
-
   function openTileDownload(feature: any) {
-    const url = getDownloadUrl(feature);
-    if (!url || typeof url !== "string") return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const rawFeature = feature as TileFeature;
+    const normalized = normalizeTile(rawFeature);
+
+    if (!normalized.url) return;
+
+    window.open(normalized.url, "_blank", "noopener,noreferrer");
   }
 
   function computeGeometryCenter(geometry: any): [number, number] | null {
@@ -247,13 +234,21 @@ export default function MapView(props: Props) {
     if (!src) return;
 
     const pointFeatures = features
-      .map((f) => {
-        const center = computeGeometryCenter((f as any).geometry);
+      .map((feature) => {
+        const center = computeGeometryCenter((feature as any).geometry);
         if (!center) return null;
+
+        const normalized = normalizeTile(feature);
 
         return {
           type: "Feature",
-          properties: { ...(f.properties ?? {}) },
+          properties: {
+            ...(feature.properties ?? {}),
+            label_text: normalized.name,
+            normalized_id: normalized.id,
+            normalized_product: normalized.product,
+            normalized_url: normalized.url,
+          },
           geometry: {
             type: "Point",
             coordinates: center,
@@ -426,23 +421,25 @@ export default function MapView(props: Props) {
       selected = [];
     }
 
-    const marked = tiles.map((t) => ({
-      ...t,
-      properties: {
-        ...t.properties,
-        __selected: selected.some((s) => {
-          const sProps = s.properties as Record<string, any>;
-          const tProps = t.properties as Record<string, any>;
+    const selectedKeys = new Set(
+      selected.map((tile) => {
+        const t = normalizeTile(tile);
+        return `${t.product}::${t.id}`;
+      })
+    );
 
-          const sId = sProps.tile_id ?? sProps.NOM_TUILE ?? "";
-          const tId = tProps.tile_id ?? tProps.NOM_TUILE ?? "";
-          const sProduct = String(sProps.product ?? "").toLowerCase();
-          const tProduct = String(tProps.product ?? "").toLowerCase();
+    const marked = tiles.map((tile) => {
+      const t = normalizeTile(tile);
+      const key = `${t.product}::${t.id}`;
 
-          return sId === tId && sProduct === tProduct;
-        }),
-      },
-    })) as TileFeature[];
+      return {
+        ...tile,
+        properties: {
+          ...tile.properties,
+          __selected: selectedKeys.has(key),
+        },
+      };
+    }) as TileFeature[];
 
     currentTilesRef.current = marked;
 

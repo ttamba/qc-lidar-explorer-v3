@@ -1,25 +1,5 @@
 import type { TileFeature } from "../types";
-
-function getTileId(tile: TileFeature): string {
-  const p = tile.properties as Record<string, any>;
-  return String(p.tile_id ?? p.NOM_TUILE ?? "unknown");
-}
-
-function getTileUrl(tile: TileFeature): string {
-  const p = tile.properties as Record<string, any>;
-  return String(
-    p.url ??
-      p.download_url ??
-      p.TELECHARGEMENT_TUILE ??
-      p.telechargement_tuile ??
-      ""
-  );
-}
-
-function getProduct(tile: TileFeature): string {
-  const p = tile.properties as Record<string, any>;
-  return String(p.product ?? "").toLowerCase();
-}
+import { normalizeTile } from "../utils/normalizeTile";
 
 export default function Basket({ tiles }: { tiles: TileFeature[] }) {
   if (!tiles || tiles.length === 0) {
@@ -28,16 +8,14 @@ export default function Basket({ tiles }: { tiles: TileFeature[] }) {
 
   return (
     <div style={{ maxHeight: 220, overflow: "auto" }}>
-      {tiles.slice(0, 50).map((t, i) => {
-        const tileId = getTileId(t);
-        const product = getProduct(t);
-        const url = getTileUrl(t);
+      {tiles.slice(0, 50).map((tile, i) => {
+        const t = normalizeTile(tile);
 
         return (
-          <div key={`${product}-${tileId}-${i}`} className="small">
-            <strong>{tileId}</strong> — {product || "unknown"} —{" "}
-            <span title={url || "URL non disponible"}>
-              {url ? (url.length > 40 ? url.slice(0, 40) + "…" : url) : "URL non disponible"}
+          <div key={`${t.product}-${t.id}-${i}`} className="small">
+            <strong>{t.name}</strong> — {t.product || "unknown"} —{" "}
+            <span title={t.url || "URL non disponible"}>
+              {t.url ? (t.url.length > 40 ? t.url.slice(0, 40) + "…" : t.url) : "URL non disponible"}
             </span>
           </div>
         );
