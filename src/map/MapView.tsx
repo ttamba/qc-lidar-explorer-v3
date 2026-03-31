@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -43,11 +43,29 @@ type LabelFeature = {
 
 type LabelFC = FeatureCollectionOf<LabelProps>;
 
+type HoverProps = {
+  __hover: true;
+};
+
+
+type HoverFC = FeatureCollectionOf<HoverProps>;
+
+type PanelInfo = {
+  id: string;
+  name: string;
+  product: "lidar" | "mnt" | "";
+  url: string;
+  year?: number | string;
+  provider?: string;
+  raw: TileFeature;
+};
+
 const SRC_LIDAR = "lidar-src";
 const SRC_MNT = "mnt-src";
 const SRC_LIDAR_LABELS = "lidar-labels-src";
 const SRC_MNT_LABELS = "mnt-labels-src";
 const SRC_AOI = "aoi-src";
+const SRC_HOVER = "hover-src";
 
 const LYR_LIDAR = "lidar-lyr";
 const LYR_LIDAR_OUTLINE = "lidar-lyr-outline";
@@ -60,6 +78,8 @@ const LYR_MNT_SELECTED = "mnt-selected-lyr";
 const LYR_MNT_LABELS = "mnt-labels-lyr";
 
 const LYR_AOI = "aoi-lyr";
+const LYR_HOVER_FILL = "hover-fill-lyr";
+const LYR_HOVER_OUTLINE = "hover-outline-lyr";
 
 const EMPTY_TILE_FC: FeatureCollectionOf<TileProps> = {
   type: "FeatureCollection",
@@ -76,6 +96,11 @@ const EMPTY_AOI_FC: FeatureCollectionOf<Record<string, any>> = {
   features: [],
 };
 
+const EMPTY_HOVER_FC: HoverFC = {
+  type: "FeatureCollection",
+  features: [],
+};
+
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +110,7 @@ export default function MapView(props: Props) {
   );
   const requestSeqRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
+  const hoverKeyRef = useRef<string>("");
 
   const showLidarRef = useRef(props.showLidar);
   const showMntRef = useRef(props.showMnt);
@@ -93,6 +119,8 @@ export default function MapView(props: Props) {
 
   const currentLidarTilesRef = useRef<TileFeature[]>([]);
   const currentMntTilesRef = useRef<TileFeature[]>([]);
+
+  const [panelInfo, setPanelInfo] = useState<PanelInfo | null>(null);
 
   useEffect(() => {
     showLidarRef.current = props.showLidar;
@@ -173,6 +201,13 @@ export default function MapView(props: Props) {
       map.addSource(SRC_AOI, {
         type: "geojson",
         data: EMPTY_AOI_FC as any,
+      });
+    }
+
+    if (!map.getSource(SRC_HOVER)) {
+      map.addSource(SRC_HOVER, {
+        type: "geojson",
+        data: EMPTY_HOVER_FC as any,
       });
     }
 
@@ -306,6 +341,31 @@ export default function MapView(props: Props) {
         },
       });
     }
+
+    if (!map.getLayer(LYR_HOVER_FILL)) {
+      map.addLayer({
+        id: LYR_HOVER_FILL,
+        type: "fill",
+        source: SRC_HOVER,
+        paint: {
+          "fill-color": "#f59e0b",
+          "fill-opacity": 0.18,
+        },
+      });
+    }
+
+    if (!map.getLayer(LYR_HOVER_OUTLINE)) {
+      map.addLayer({
+        id: LYR_HOVER_OUTLINE,
+        type: "line",
+        source: SRC_HOVER,
+        paint: {
+          "line-color": "#f59e0b",
+          "line-width": 3,
+          "line-opacity": 1,
+        },
+      });
+    }
   }
 
   function setDatasetVisibility(map: Map, dataset: Dataset, visible: boolean) {
@@ -361,31 +421,29 @@ export default function MapView(props: Props) {
     src.setData(data as any);
   }
 
-  function getUrlFromRenderedFeature(feature: unknown): string {
-    const rendered = feature as {
-      properties?: Record<string, unknown>;
+  function setHoverSourceData(map: Map, tile: TileFeature | null) {
+    const src = getGeoJsonSource(map, SRC_HOVER);
+    if (!src) return;
+
+    if (!tile) {
+      src.setData(EMPTY_HOVER_FC as any);
+      return;
+    }
+
+    const fc: HoverFC = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {
+            __hover: true,
+          },
+          geometry: tile.geometry,
+        },
+      ],
     };
 
-    const props = rendered?.properties ?? {};
-
-    const labelUrl = props.normalized_url;
-    if (typeof labelUrl === "string" && labelUrl.trim()) {
-      return labelUrl.trim();
-    }
-
-    try {
-      const normalized = normalizeTile(feature as TileFeature);
-      return normalized.url ?? "";
-    } catch {
-      return "";
-    }
-  }
-
-  function openFeatureDownload(feature: unknown) {
-    const url = getUrlFromRenderedFeature(feature);
-    if (!url) return;
-
-    window.open(url, "_blank", "noopener,noreferrer");
+    src.setData(fc as any);
   }
 
   function computeGeometryCenter(geometry: Geometry): [number, number] | null {
@@ -514,6 +572,72 @@ export default function MapView(props: Props) {
     updateLabelSource(map, marked, dataset);
   }
 
+  function findTileByKey(dataset: Dataset, id: string): TileFeature | null {
+    const tiles =
+      dataset === "lidar"
+        ? currentLidarTilesRef.current
+        : currentMntTilesRef.current;
+
+    for (const tile of tiles) {
+      const normalized = normalizeTile(tile);
+      if (normalized.id === id) return tile;
+    }
+
+    return null;
+  }
+
+  function getTileFromRenderedFeature(feature: unknown): TileFeature | null {
+    const rendered = feature as {
+      properties?: Record<string, unknown>;
+      geometry?: { type?: string };
+    };
+
+    const props = rendered?.properties ?? {};
+
+    const normalizedId =
+      typeof props.normalized_id === "string" ? props.normalized_id : "";
+    const normalizedProduct =
+      props.normalized_product === "lidar" || props.normalized_product === "mnt"
+        ? props.normalized_product
+        : props.__dataset === "lidar" || props.__dataset === "mnt"
+        ? props.__dataset
+        : null;
+
+    if (normalizedId && normalizedProduct) {
+      return findTileByKey(normalizedProduct, normalizedId);
+    }
+
+    try {
+      return feature as TileFeature;
+    } catch {
+      return null;
+    }
+  }
+
+  function getPanelInfoFromTile(tile: TileFeature): PanelInfo {
+    const normalized = normalizeTile(tile);
+    const p = tile.properties ?? {};
+
+    return {
+      id: normalized.id,
+      name: normalized.name,
+      product: normalized.product,
+      url: normalized.url,
+      year: normalized.year ?? p.year,
+      provider:
+        normalized.provider ??
+        p.provider ??
+        p.SOURCE_DONNEES ??
+        p.PROJET,
+      raw: tile,
+    };
+  }
+
+  function openUrl(url: string) {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   async function refreshSelection(
     map: Map,
     lidarTiles: TileFeature[],
@@ -554,6 +678,8 @@ export default function MapView(props: Props) {
 
       setTilesOnMap(map, "lidar", []);
       setTilesOnMap(map, "mnt", []);
+      setHoverSourceData(map, null);
+      hoverKeyRef.current = "";
 
       onSelectionChangeRef.current([]);
       return;
@@ -589,6 +715,23 @@ export default function MapView(props: Props) {
     setTilesOnMap(map, "mnt", mntTiles);
 
     await refreshSelection(map, lidarTiles, mntTiles);
+
+    if (panelInfo) {
+      const dataset = panelInfo.product === "lidar" || panelInfo.product === "mnt"
+        ? panelInfo.product
+        : null;
+
+      if (dataset) {
+        const freshTile = findTileByKey(dataset, panelInfo.id);
+        if (freshTile) {
+          setPanelInfo(getPanelInfoFromTile(freshTile));
+        } else {
+          setPanelInfo(null);
+        }
+      } else {
+        setPanelInfo(null);
+      }
+    }
   }
 
   function scheduleRefresh(map: Map, delay = 120) {
@@ -615,6 +758,13 @@ export default function MapView(props: Props) {
     });
   }
 
+  function clearHover(map: Map) {
+    if (hoverKeyRef.current) {
+      hoverKeyRef.current = "";
+      setHoverSourceData(map, null);
+    }
+  }
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -631,22 +781,64 @@ export default function MapView(props: Props) {
       const features = getInteractiveFeaturesAtPoint(map, e.point);
       const feature = features[0];
       if (!feature) return;
-      openFeatureDownload(feature);
+
+      const tile = getTileFromRenderedFeature(feature);
+      if (!tile) return;
+
+      const info = getPanelInfoFromTile(tile);
+      setPanelInfo(info);
+
+      const isDirectDownload =
+        (e.originalEvent as MouseEvent).ctrlKey ||
+        (e.originalEvent as MouseEvent).metaKey;
+
+      if (isDirectDownload && info.url) {
+        openUrl(info.url);
+      }
     };
 
     const handleMouseMove = (e: maplibregl.MapMouseEvent) => {
       const features = getInteractiveFeaturesAtPoint(map, e.point);
-      map.getCanvas().style.cursor = features.length > 0 ? "pointer" : "";
+      const feature = features[0];
+
+      if (!feature) {
+        map.getCanvas().style.cursor = "";
+        clearHover(map);
+        return;
+      }
+
+      map.getCanvas().style.cursor = "pointer";
+
+      const tile = getTileFromRenderedFeature(feature);
+      if (!tile) {
+        clearHover(map);
+        return;
+      }
+
+      const normalized = normalizeTile(tile);
+      const key = `${normalized.product}::${normalized.id}`;
+
+      if (hoverKeyRef.current === key) return;
+
+      hoverKeyRef.current = key;
+      setHoverSourceData(map, tile);
+    };
+
+    const handleMouseLeave = () => {
+      map.getCanvas().style.cursor = "";
+      clearHover(map);
     };
 
     map.on("load", () => {
       ensureCustomSourcesAndLayers(map);
       setAoiSourceData(map, aoiRef.current);
+      setHoverSourceData(map, null);
       void refreshTiles(map);
     });
 
     map.on("click", handleClick);
     map.on("mousemove", handleMouseMove);
+    map.on("mouseout", handleMouseLeave);
 
     map.on("moveend", () => {
       scheduleRefresh(map, 120);
@@ -662,10 +854,11 @@ export default function MapView(props: Props) {
 
       map.off("click", handleClick);
       map.off("mousemove", handleMouseMove);
+      map.off("mouseout", handleMouseLeave);
       map.remove();
       mapRef.current = null;
     };
-  }, [styleSpec]);
+  }, [styleSpec, panelInfo]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -676,6 +869,8 @@ export default function MapView(props: Props) {
     map.once("styledata", () => {
       ensureCustomSourcesAndLayers(map);
       setAoiSourceData(map, aoiRef.current);
+      setHoverSourceData(map, null);
+      hoverKeyRef.current = "";
       void refreshTiles(map);
     });
   }, [styleSpec]);
@@ -712,5 +907,137 @@ export default function MapView(props: Props) {
     void refreshTiles(map);
   }, [props.showMnt]);
 
-  return <div ref={containerRef} className="map" />;
+  return (
+    <div
+      ref={containerRef}
+      className="map"
+      style={{ position: "relative" }}
+    >
+      {panelInfo && (
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            zIndex: 20,
+            width: 320,
+            maxWidth: "calc(100% - 24px)",
+            background: "rgba(255,255,255,0.96)",
+            border: "1px solid #d1d5db",
+            borderRadius: 10,
+            boxShadow: "0 10px 24px rgba(0,0,0,0.14)",
+            padding: 12,
+            fontSize: 13,
+            lineHeight: 1.4,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "start",
+              justifyContent: "space-between",
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontWeight: 700, color: "#111827" }}>
+              {panelInfo.name || "Tuile"}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setPanelInfo(null)}
+              style={{
+                border: "none",
+                background: "transparent",
+                fontSize: 18,
+                lineHeight: 1,
+                cursor: "pointer",
+                color: "#6b7280",
+              }}
+              aria-label="Fermer"
+              title="Fermer"
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ marginBottom: 4 }}>
+            <strong>Produit :</strong> {panelInfo.product || "unknown"}
+          </div>
+
+          <div style={{ marginBottom: 4 }}>
+            <strong>ID :</strong> {panelInfo.id || "unknown"}
+          </div>
+
+          <div style={{ marginBottom: 4 }}>
+            <strong>Année :</strong>{" "}
+            {panelInfo.year !== undefined && panelInfo.year !== ""
+              ? String(panelInfo.year)
+              : "N/D"}
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <strong>Fournisseur :</strong>{" "}
+            {panelInfo.provider ? String(panelInfo.provider) : "N/D"}
+          </div>
+
+          <div
+            style={{
+              marginBottom: 10,
+              wordBreak: "break-all",
+              color: "#374151",
+            }}
+          >
+            <strong>URL :</strong>{" "}
+            {panelInfo.url ? panelInfo.url : "URL non disponible"}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={!panelInfo.url}
+              onClick={() => openUrl(panelInfo.url)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid #2563eb",
+                background: panelInfo.url ? "#2563eb" : "#9ca3af",
+                color: "#ffffff",
+                cursor: panelInfo.url ? "pointer" : "not-allowed",
+                fontWeight: 600,
+              }}
+            >
+              Télécharger
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPanelInfo(null)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid #d1d5db",
+                background: "#ffffff",
+                color: "#111827",
+                cursor: "pointer",
+              }}
+            >
+              Fermer
+            </button>
+          </div>
+
+          <div
+            style={{
+              marginTop: 10,
+              color: "#6b7280",
+              fontSize: 12,
+            }}
+          >
+            Astuce : Ctrl/Cmd + clic ouvre directement le téléchargement.
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
