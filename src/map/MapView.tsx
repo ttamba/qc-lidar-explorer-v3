@@ -47,7 +47,6 @@ type HoverProps = {
   __hover: true;
 };
 
-
 type HoverFC = FeatureCollectionOf<HoverProps>;
 
 type PanelInfo = {
@@ -121,6 +120,7 @@ export default function MapView(props: Props) {
   const currentMntTilesRef = useRef<TileFeature[]>([]);
 
   const [panelInfo, setPanelInfo] = useState<PanelInfo | null>(null);
+  const panelInfoRef = useRef<PanelInfo | null>(null);
 
   useEffect(() => {
     showLidarRef.current = props.showLidar;
@@ -137,6 +137,10 @@ export default function MapView(props: Props) {
   useEffect(() => {
     onSelectionChangeRef.current = props.onSelectionChange;
   }, [props.onSelectionChange]);
+
+  useEffect(() => {
+    panelInfoRef.current = panelInfo;
+  }, [panelInfo]);
 
   const styleSpec = useMemo<maplibregl.StyleSpecification>(() => {
     const osm = props.basemaps?.basemaps?.[0];
@@ -589,7 +593,6 @@ export default function MapView(props: Props) {
   function getTileFromRenderedFeature(feature: unknown): TileFeature | null {
     const rendered = feature as {
       properties?: Record<string, unknown>;
-      geometry?: { type?: string };
     };
 
     const props = rendered?.properties ?? {};
@@ -600,18 +603,14 @@ export default function MapView(props: Props) {
       props.normalized_product === "lidar" || props.normalized_product === "mnt"
         ? props.normalized_product
         : props.__dataset === "lidar" || props.__dataset === "mnt"
-        ? props.__dataset
-        : null;
+          ? props.__dataset
+          : null;
 
     if (normalizedId && normalizedProduct) {
       return findTileByKey(normalizedProduct, normalizedId);
     }
 
-    try {
-      return feature as TileFeature;
-    } catch {
-      return null;
-    }
+    return feature as TileFeature;
   }
 
   function getPanelInfoFromTile(tile: TileFeature): PanelInfo {
@@ -716,13 +715,15 @@ export default function MapView(props: Props) {
 
     await refreshSelection(map, lidarTiles, mntTiles);
 
-    if (panelInfo) {
-      const dataset = panelInfo.product === "lidar" || panelInfo.product === "mnt"
-        ? panelInfo.product
-        : null;
+    const currentPanel = panelInfoRef.current;
+    if (currentPanel) {
+      const dataset =
+        currentPanel.product === "lidar" || currentPanel.product === "mnt"
+          ? currentPanel.product
+          : null;
 
       if (dataset) {
-        const freshTile = findTileByKey(dataset, panelInfo.id);
+        const freshTile = findTileByKey(dataset, currentPanel.id);
         if (freshTile) {
           setPanelInfo(getPanelInfoFromTile(freshTile));
         } else {
@@ -858,7 +859,7 @@ export default function MapView(props: Props) {
       map.remove();
       mapRef.current = null;
     };
-  }, [styleSpec, panelInfo]);
+  }, [styleSpec]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -909,10 +910,21 @@ export default function MapView(props: Props) {
 
   return (
     <div
-      ref={containerRef}
-      className="map"
-      style={{ position: "relative" }}
+      style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+      }}
     >
+      <div
+        ref={containerRef}
+        className="map"
+        style={{
+          position: "absolute",
+          inset: 0,
+        }}
+      />
+
       {panelInfo && (
         <div
           style={{
