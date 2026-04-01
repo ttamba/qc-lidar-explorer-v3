@@ -10,6 +10,19 @@ export type NormalizedTile = {
   raw: TileFeature;
 };
 
+function extractYearFromTileName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+
+  const trimmed = value.trim();
+  const first4 = trimmed.slice(0, 4);
+
+  if (/^(19|20)\d{2}$/.test(first4)) {
+    return first4;
+  }
+
+  return undefined;
+}
+
 export function normalizeTile(tile: TileFeature): NormalizedTile {
   const p = (tile?.properties ?? {}) as Record<string, any>;
 
@@ -35,12 +48,17 @@ export function normalizeTile(tile: TileFeature): NormalizedTile {
       ""
   );
 
+  const derivedYear =
+    p.year ??
+    extractYearFromTileName(p.NOM_TUILE) ??
+    extractYearFromTileName(p.tile_id);
+
   return {
     id,
     name,
     product,
     url,
-    year: p.year,
+    year: derivedYear,
     provider: p.provider,
     raw: tile,
   };
