@@ -5,19 +5,48 @@ export type NormalizedTile = {
   name: string;
   product: "lidar" | "mnt" | "";
   url: string;
-  year?: number | string;
+  year?: string;
   provider?: string;
   raw: TileFeature;
 };
 
-function extractYearFromTileName(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+function extractMntYear(p: Record<string, any>): string | undefined {
+  const raw = String(p.DATES_AQUISITION ?? "").trim();
+  const year = raw.slice(0, 4);
 
-  const trimmed = value.trim();
-  const first4 = trimmed.slice(0, 4);
+  if (/^(19|20)\d{2}$/.test(year)) {
+    return year;
+  }
 
-  if (/^(19|20)\d{2}$/.test(first4)) {
-    return first4;
+  return undefined;
+}
+
+function extractLidarYear(p: Record<string, any>): string | undefined {
+  const raw = String(p.NOM_TUILE ?? "").trim();
+  const yy = raw.slice(0, 2);
+
+  if (!/^\d{2}$/.test(yy)) {
+    return undefined;
+  }
+
+  const n = Number(yy);
+
+  // Ajuste ici si tes données historiques nécessitent une autre règle
+  // 00-79 => 2000-2079
+  // 80-99 => 1980-1999
+  return String(n <= 79 ? 2000 + n : 1900 + n);
+}
+
+function extractYearByProduct(
+  product: "lidar" | "mnt" | "",
+  p: Record<string, any>
+): string | undefined {
+  if (product === "mnt") {
+    return extractMntYear(p);
+  }
+
+  if (product === "lidar") {
+    return extractLidarYear(p);
   }
 
   return undefined;
@@ -48,17 +77,16 @@ export function normalizeTile(tile: TileFeature): NormalizedTile {
       ""
   );
 
-  const derivedYear =
-    p.year ??
-    extractYearFromTileName(p.NOM_TUILE) ??
-    extractYearFromTileName(p.tile_id);
+  const year =
+    (p.year ? String(p.year) : undefined) ??
+    extractYearByProduct(product, p);
 
   return {
     id,
     name,
     product,
     url,
-    year: derivedYear,
+    year,
     provider: p.provider,
     raw: tile,
   };

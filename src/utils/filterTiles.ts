@@ -9,6 +9,6 @@ export function filterTilesByYear(
 
   return tiles.filter((tile) => {
     const t = normalizeTile(tile);
-    return t.year && String(t.year) === selectedYear;
+    return t.year === selectedYear;
   });
 }
