@@ -31,9 +31,6 @@ function extractLidarYear(p: Record<string, any>): string | undefined {
 
   const n = Number(yy);
 
-  // Ajuste ici si tes données historiques nécessitent une autre règle
-  // 00-79 => 2000-2079
-  // 80-99 => 1980-1999
   return String(n <= 79 ? 2000 + n : 1900 + n);
 }
 
