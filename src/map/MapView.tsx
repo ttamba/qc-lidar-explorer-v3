@@ -13,12 +13,17 @@ import type {
 import { loadTilesForBBox } from "../index/loadChunks";
 import { intersectAoiWithTiles } from "../selection/intersect";
 import { normalizeTile } from "../utils/normalizeTile";
+import { filterTilesByYear } from "../utils/filterTiles";
 
 type Props = {
   basemaps: BasemapConfig | null;
   aoi: AoiFeature | null;
   showLidar: boolean;
   showMnt: boolean;
+  yearFilter: {
+    lidar: string | "ALL";
+    mnt: string | "ALL";
+  };
   onSelectionChange: (tiles: TileFeature[]) => void;
 };
 
@@ -710,8 +715,20 @@ export default function MapView(props: Props) {
 
     if (requestId !== requestSeqRef.current) return;
 
-    setTilesOnMap(map, "lidar", lidarTiles);
-    setTilesOnMap(map, "mnt", mntTiles);
+    // ✅ FILTRAGE PAR ANNÉE
+	lidarTiles = filterTilesByYear(
+	  lidarTiles,
+      props.yearFilter.lidar
+	);
+
+	mntTiles = filterTilesByYear(
+	  mntTiles,
+      props.yearFilter.mnt
+	);
+
+	// 🔁 ensuite logique normale
+	setTilesOnMap(map, "lidar", lidarTiles);
+	setTilesOnMap(map, "mnt", mntTiles);
 
     await refreshSelection(map, lidarTiles, mntTiles);
 
