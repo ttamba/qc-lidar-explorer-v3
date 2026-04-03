@@ -13,8 +13,7 @@ import type {
 import { loadTilesForBBox } from "../index/loadChunks";
 import { intersectAoiWithTiles } from "../selection/intersect";
 import { normalizeTile } from "../utils/normalizeTile";
-import { filterTilesByYear } from "../utils/filterTiles";
-
+import { extractAvailableYears, filterTilesByYear } from "../utils/filterTiles";
 type Props = {
   basemaps: BasemapConfig | null;
   aoi: AoiFeature | null;
@@ -24,6 +23,7 @@ type Props = {
     lidar: string | "ALL";
     mnt: string | "ALL";
   };
+  onYearsChange?: (years: { lidar: string[]; mnt: string[] }) => void;
   onSelectionChange: (tiles: TileFeature[]) => void;
 };
 
@@ -715,22 +715,30 @@ export default function MapView(props: Props) {
 
     if (requestId !== requestSeqRef.current) return;
 
-    // ✅ FILTRAGE PAR ANNÉE
+	// ✅ EXTRACTION DES ANNÉES DISPONIBLES AVANT FILTRAGE
+	const lidarYears = extractAvailableYears(lidarTiles);
+	const mntYears = extractAvailableYears(mntTiles);
+
+	props.onYearsChange?.({
+	  lidar: lidarYears,
+	  mnt: mntYears,
+	});
+
+	// ✅ FILTRAGE PAR ANNÉE AVANT AFFICHAGE ET SÉLECTION
 	lidarTiles = filterTilesByYear(
 	  lidarTiles,
       props.yearFilter.lidar
 	);
 
 	mntTiles = filterTilesByYear(
-	  mntTiles,
+      mntTiles,
       props.yearFilter.mnt
 	);
 
-	// 🔁 ensuite logique normale
 	setTilesOnMap(map, "lidar", lidarTiles);
 	setTilesOnMap(map, "mnt", mntTiles);
 
-    await refreshSelection(map, lidarTiles, mntTiles);
+	await refreshSelection(map, lidarTiles, mntTiles);
 
     const currentPanel = panelInfoRef.current;
     if (currentPanel) {
