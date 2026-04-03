@@ -739,6 +739,13 @@ export default function MapView(props: Props) {
 	setTilesOnMap(map, "mnt", mntTiles);
 
 	await refreshSelection(map, lidarTiles, mntTiles);
+	
+	useEffect(() => {
+      const map = mapRef.current;
+      if (!map || !map.isStyleLoaded()) return;
+
+      void refreshTiles(map);
+	}, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
     const currentPanel = panelInfoRef.current;
     if (currentPanel) {
