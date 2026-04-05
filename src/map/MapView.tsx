@@ -12,8 +12,9 @@ import type {
 } from "../types";
 import { loadTilesForBBox } from "../index/loadChunks";
 import { intersectAoiWithTiles } from "../selection/intersect";
-import { normalizeTile } from "../utils/normalizeTile";
 import { extractAvailableYears, filterTilesByYear } from "../utils/filterTiles";
+import { normalizeTile } from "../utils/normalizeTile";
+
 type Props = {
   basemaps: BasemapConfig | null;
   aoi: AoiFeature | null;
@@ -59,7 +60,7 @@ type PanelInfo = {
   name: string;
   product: "lidar" | "mnt" | "";
   url: string;
-  year?: number | string;
+  year?: string;
   provider?: string;
   raw: TileFeature;
 };
@@ -120,6 +121,8 @@ export default function MapView(props: Props) {
   const showMntRef = useRef(props.showMnt);
   const aoiRef = useRef(props.aoi);
   const onSelectionChangeRef = useRef(props.onSelectionChange);
+  const onYearsChangeRef = useRef(props.onYearsChange);
+  const yearFilterRef = useRef(props.yearFilter);
 
   const currentLidarTilesRef = useRef<TileFeature[]>([]);
   const currentMntTilesRef = useRef<TileFeature[]>([]);
@@ -142,6 +145,14 @@ export default function MapView(props: Props) {
   useEffect(() => {
     onSelectionChangeRef.current = props.onSelectionChange;
   }, [props.onSelectionChange]);
+
+  useEffect(() => {
+    onYearsChangeRef.current = props.onYearsChange;
+  }, [props.onYearsChange]);
+
+  useEffect(() => {
+    yearFilterRef.current = props.yearFilter;
+  }, [props.yearFilter]);
 
   useEffect(() => {
     panelInfoRef.current = panelInfo;
@@ -627,7 +638,7 @@ export default function MapView(props: Props) {
       name: normalized.name,
       product: normalized.product,
       url: normalized.url,
-      year: normalized.year ?? p.year,
+      year: normalized.year,
       provider:
         normalized.provider ??
         p.provider ??
@@ -685,6 +696,11 @@ export default function MapView(props: Props) {
       setHoverSourceData(map, null);
       hoverKeyRef.current = "";
 
+      onYearsChangeRef.current?.({
+        lidar: [],
+        mnt: [],
+      });
+
       onSelectionChangeRef.current([]);
       return;
     }
@@ -715,37 +731,28 @@ export default function MapView(props: Props) {
 
     if (requestId !== requestSeqRef.current) return;
 
-	// ✅ EXTRACTION DES ANNÉES DISPONIBLES AVANT FILTRAGE
-	const lidarYears = extractAvailableYears(lidarTiles);
-	const mntYears = extractAvailableYears(mntTiles);
+    const lidarYears = extractAvailableYears(lidarTiles);
+    const mntYears = extractAvailableYears(mntTiles);
 
-	props.onYearsChange?.({
-	  lidar: lidarYears,
-	  mnt: mntYears,
-	});
+    onYearsChangeRef.current?.({
+      lidar: lidarYears,
+      mnt: mntYears,
+    });
 
-	// ✅ FILTRAGE PAR ANNÉE AVANT AFFICHAGE ET SÉLECTION
-	lidarTiles = filterTilesByYear(
-	  lidarTiles,
-      props.yearFilter.lidar
-	);
+    lidarTiles = filterTilesByYear(
+      lidarTiles,
+      yearFilterRef.current.lidar
+    );
 
-	mntTiles = filterTilesByYear(
+    mntTiles = filterTilesByYear(
       mntTiles,
-      props.yearFilter.mnt
-	);
+      yearFilterRef.current.mnt
+    );
 
-	setTilesOnMap(map, "lidar", lidarTiles);
-	setTilesOnMap(map, "mnt", mntTiles);
+    setTilesOnMap(map, "lidar", lidarTiles);
+    setTilesOnMap(map, "mnt", mntTiles);
 
-	await refreshSelection(map, lidarTiles, mntTiles);
-	
-	useEffect(() => {
-      const map = mapRef.current;
-      if (!map || !map.isStyleLoaded()) return;
-
-      void refreshTiles(map);
-	}, [props.yearFilter.lidar, props.yearFilter.mnt]);
+    await refreshSelection(map, lidarTiles, mntTiles);
 
     const currentPanel = panelInfoRef.current;
     if (currentPanel) {
@@ -940,6 +947,13 @@ export default function MapView(props: Props) {
     void refreshTiles(map);
   }, [props.showMnt]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    void refreshTiles(map);
+  }, [props.yearFilter.lidar, props.yearFilter.mnt]);
+
   return (
     <div
       style={{
@@ -1015,10 +1029,7 @@ export default function MapView(props: Props) {
           </div>
 
           <div style={{ marginBottom: 4 }}>
-            <strong>Année :</strong>{" "}
-            {panelInfo.year !== undefined && panelInfo.year !== ""
-              ? String(panelInfo.year)
-              : "N/D"}
+            <strong>Année :</strong> {panelInfo.year ?? "N/D"}
           </div>
 
           <div style={{ marginBottom: 8 }}>
