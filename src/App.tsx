@@ -34,60 +34,49 @@ export default function App() {
 
   const [loadingAoi, setLoadingAoi] = useState(false);
 
-  // =========================
-  // 📥 IMPORT AOI
-  // =========================
   async function handleAoiFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
       setLoadingAoi(true);
-
-      const geo = await importAoiFromFile(file); // :contentReference[oaicite:0]{index=0}
-      const valid = validateAoi(geo); // :contentReference[oaicite:1]{index=1}
-
+      const geo = await importAoiFromFile(file);
+      const valid = validateAoi(geo);
       setAoi(valid);
     } catch (err: any) {
       alert(err?.message ?? "Erreur lors du chargement AOI");
     } finally {
       setLoadingAoi(false);
+      e.target.value = "";
     }
   }
 
-  // =========================
-  // 📊 COMPTEURS
-  // =========================
+  const clearAoi = () => {
+    setAoi(null);
+    setSelectedTiles([]);
+  };
+
   const lidarCount = selectedTiles.filter(
-    (t) => (t.properties?.product ?? "").toLowerCase() === "lidar"
+    (t) => String(t.properties?.product ?? "").toLowerCase() === "lidar"
   ).length;
 
   const mntCount = selectedTiles.filter(
-    (t) => (t.properties?.product ?? "").toLowerCase() === "mnt"
+    (t) => String(t.properties?.product ?? "").toLowerCase() === "mnt"
   ).length;
 
-  // =========================
-  // 🧹 RESET
-  // =========================
-  function clearSelection() {
+  const clearSelection = () => {
     setSelectedTiles([]);
-  }
+  };
 
-  // =========================
-  // 📤 EXPORT
-  // =========================
   async function handleExport() {
     await exportBundle({
       aoi,
       tiles: selectedTiles,
-    }); // :contentReference[oaicite:2]{index=2}
+    });
   }
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>
-      {/* =========================
-          🧭 PANEL GAUCHE
-      ========================= */}
       <div
         style={{
           width: 320,
@@ -98,7 +87,6 @@ export default function App() {
       >
         <h3>Filtres</h3>
 
-        {/* Toggle couches */}
         <label>
           <input
             type="checkbox"
@@ -119,9 +107,6 @@ export default function App() {
           MNT
         </label>
 
-        {/* =========================
-            🎯 FILTRES ANNÉES
-        ========================= */}
         <div style={{ marginTop: 12 }}>
           <label>LiDAR année</label>
           <select
@@ -136,7 +121,9 @@ export default function App() {
           >
             <option value="ALL">Toutes</option>
             {availableYears.lidar.map((y) => (
-              <option key={y}>{y}</option>
+              <option key={y} value={y}>
+                {y}
+              </option>
             ))}
           </select>
         </div>
@@ -155,29 +142,41 @@ export default function App() {
           >
             <option value="ALL">Toutes</option>
             {availableYears.mnt.map((y) => (
-              <option key={y}>{y}</option>
+              <option key={y} value={y}>
+                {y}
+              </option>
             ))}
           </select>
         </div>
 
-        {/* =========================
-            📍 AOI
-        ========================= */}
         <h3 style={{ marginTop: 16 }}>AOI (zone d’étude)</h3>
+
+        <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+          Formats : GeoJSON, KML, KMZ, Shapefile (.zip).
+        </div>
 
         <input type="file" onChange={handleAoiFile} />
 
-        {loadingAoi && <div>Chargement AOI...</div>}
+        {loadingAoi && <div style={{ marginTop: 8 }}>Chargement AOI...</div>}
 
         {aoi && (
-          <div style={{ color: "green", fontSize: 12 }}>
-            AOI chargée ✓
+          <div style={{ marginTop: 8 }}>
+            <div style={{ color: "green", fontSize: 12, marginBottom: 6 }}>
+              AOI chargée ✓
+            </div>
+
+            <button type="button" onClick={clearAoi}>
+              Effacer la zone d’étude
+            </button>
           </div>
         )}
 
-        {/* =========================
-            📊 SÉLECTION
-        ========================= */}
+        {!aoi && !loadingAoi && (
+          <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
+            Charge une AOI pour activer la sélection.
+          </div>
+        )}
+
         <h3 style={{ marginTop: 16 }}>Sélection</h3>
 
         <div>Total: {selectedTiles.length}</div>
@@ -196,16 +195,10 @@ export default function App() {
           Vider la sélection
         </button>
 
-        {/* =========================
-            🧺 PANIER
-        ========================= */}
         <h3 style={{ marginTop: 16 }}>Panier</h3>
         <Basket tiles={selectedTiles} />
       </div>
 
-      {/* =========================
-          🗺️ MAP
-      ========================= */}
       <div style={{ flex: 1 }}>
         <MapView
           aoi={aoi}
