@@ -89,7 +89,7 @@ export default function App() {
 
         <label>
           <input
-            type="radiobutton"
+            type="checkbox"
             checked={showLidar}
             onChange={(e) => setShowLidar(e.target.checked)}
           />{" "}
@@ -100,7 +100,7 @@ export default function App() {
 
         <label>
           <input
-            type="radiobutton"
+            type="checkbox"
             checked={showMnt}
             onChange={(e) => setShowMnt(e.target.checked)}
           />{" "}
@@ -149,7 +149,7 @@ export default function App() {
           </select>
         </div>
 
-        <h3 style={{ marginTop: 16 }}>Télécharger la zone d'étude</h3>
+        <h3 style={{ marginTop: 16 }}>Charger la zone d'étude</h3>
 
         <div style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
           Formats : GeoJSON, KML, KMZ, Shapefile (.zip).
