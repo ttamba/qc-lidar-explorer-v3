@@ -65,6 +65,31 @@ type PanelInfo = {
   raw: TileFeature;
 };
 
+type RuntimeTileFeature = TileFeature & {
+  id: string;
+  properties: TileProps & {
+    __dataset: Dataset;
+    normalized_id: string;
+    normalized_product: "lidar" | "mnt";
+    normalized_url: string;
+    normalized_name: string;
+    normalized_year?: string;
+    normalized_provider?: string;
+  };
+};
+
+type IntersectWorkerRequest = {
+  requestId: string;
+  aoi: AoiFeature;
+  tiles: RuntimeTileFeature[];
+};
+
+type IntersectWorkerResponse = {
+  requestId: string;
+  selectedIds?: string[];
+  error?: string;
+};
+
 const SRC_LIDAR = "lidar-src";
 const SRC_MNT = "mnt-src";
 const SRC_LIDAR_LABELS = "lidar-labels-src";
@@ -106,6 +131,45 @@ const EMPTY_HOVER_FC: HoverFC = {
   features: [],
 };
 
+function rafThrottle<T extends (...args: any[]) => void>(fn: T): T {
+  let scheduled = false;
+  let lastArgs: any[] = [];
+
+  return ((...args: any[]) => {
+    lastArgs = args;
+
+    if (scheduled) return;
+    scheduled = true;
+
+    requestAnimationFrame(() => {
+      scheduled = false;
+      fn(...lastArgs);
+    });
+  }) as T;
+}
+
+function getGeoJsonSource(map: Map, sourceId: string) {
+  return map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+}
+
+function getSelectionLayerIds(dataset: Dataset) {
+  return dataset === "lidar"
+    ? [LYR_LIDAR, LYR_LIDAR_OUTLINE, LYR_LIDAR_SELECTED, LYR_LIDAR_LABELS]
+    : [LYR_MNT, LYR_MNT_OUTLINE, LYR_MNT_SELECTED, LYR_MNT_LABELS];
+}
+
+function buildRuntimeKey(dataset: Dataset, normalizedId: string) {
+  return `${dataset}::${normalizedId}`;
+}
+
+function areSetsEqual(a: Set<string>, b: Set<string>) {
+  if (a.size !== b.size) return false;
+  for (const value of a) {
+    if (!b.has(value)) return false;
+  }
+  return true;
+}
+
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -113,7 +177,25 @@ export default function MapView(props: Props) {
   const cacheRef = useRef<globalThis.Map<string, TileFeature[]>>(
     new globalThis.Map()
   );
+
+  const normalizeCacheRef = useRef(
+    new WeakMap<TileFeature, ReturnType<typeof normalizeTile>>()
+  );
+  const centerCacheRef = useRef<globalThis.Map<string, [number, number] | null>>(
+    new globalThis.Map()
+  );
+  const labelCacheRef = useRef<globalThis.Map<string, LabelFeature[]>>(
+    new globalThis.Map()
+  );
+  const sourceDataKeyRef = useRef<globalThis.Map<string, string>>(
+    new globalThis.Map()
+  );
+
+  const workerRef = useRef<Worker | null>(null);
+  const workerSupportedRef = useRef<boolean>(true);
+
   const requestSeqRef = useRef(0);
+  const selectionSeqRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
   const hoverKeyRef = useRef<string>("");
 
@@ -124,8 +206,45 @@ export default function MapView(props: Props) {
   const onYearsChangeRef = useRef(props.onYearsChange);
   const yearFilterRef = useRef(props.yearFilter);
 
-  const currentLidarTilesRef = useRef<TileFeature[]>([]);
-  const currentMntTilesRef = useRef<TileFeature[]>([]);
+  const rawLidarTilesRef = useRef<TileFeature[]>([]);
+  const rawMntTilesRef = useRef<TileFeature[]>([]);
+
+  const displayedLidarTilesRef = useRef<RuntimeTileFeature[]>([]);
+  const displayedMntTilesRef = useRef<RuntimeTileFeature[]>([]);
+
+  const lookupByRuntimeIdRef = useRef<{
+    lidar: globalThis.Map<string, RuntimeTileFeature>;
+    mnt: globalThis.Map<string, RuntimeTileFeature>;
+  }>({
+    lidar: new globalThis.Map(),
+    mnt: new globalThis.Map(),
+  });
+
+  const lookupByNormalizedIdRef = useRef<{
+    lidar: globalThis.Map<string, RuntimeTileFeature>;
+    mnt: globalThis.Map<string, RuntimeTileFeature>;
+  }>({
+    lidar: new globalThis.Map(),
+    mnt: new globalThis.Map(),
+  });
+
+  const selectedKeysRef = useRef<{
+    lidar: Set<string>;
+    mnt: Set<string>;
+  }>({
+    lidar: new Set<string>(),
+    mnt: new Set<string>(),
+  });
+
+  const lastViewStateRef = useRef<{
+    bboxKey: string;
+    showLidar: boolean;
+    showMnt: boolean;
+  }>({
+    bboxKey: "",
+    showLidar: false,
+    showMnt: false,
+  });
 
   const [panelInfo, setPanelInfo] = useState<PanelInfo | null>(null);
   const panelInfoRef = useRef<PanelInfo | null>(null);
@@ -184,8 +303,48 @@ export default function MapView(props: Props) {
     };
   }, [props.basemaps]);
 
-  function getGeoJsonSource(map: Map, sourceId: string) {
-    return map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  function getNormalized(tile: TileFeature) {
+    const cached = normalizeCacheRef.current.get(tile);
+    if (cached) return cached;
+
+    const normalized = normalizeTile(tile);
+    normalizeCacheRef.current.set(tile, normalized);
+    return normalized;
+  }
+
+    function setRuntimeTiles(dataset: Dataset, tiles: RuntimeTileFeature[]) {
+    if (dataset === "lidar") {
+      displayedLidarTilesRef.current = tiles;
+    } else {
+      displayedMntTilesRef.current = tiles;
+    }
+
+    const byRuntime = new globalThis.Map<string, RuntimeTileFeature>();
+    const byNormalized = new globalThis.Map<string, RuntimeTileFeature>();
+
+    for (const tile of tiles) {
+      byRuntime.set(tile.id, tile);
+      byNormalized.set(tile.properties.normalized_id, tile);
+    }
+
+    lookupByRuntimeIdRef.current[dataset] = byRuntime;
+    lookupByNormalizedIdRef.current[dataset] = byNormalized;
+  }
+
+  function setSourceDataIfChanged(
+    map: Map,
+    sourceId: string,
+    key: string,
+    data: unknown
+  ) {
+    const source = getGeoJsonSource(map, sourceId);
+    if (!source) return;
+
+    const previousKey = sourceDataKeyRef.current.get(sourceId);
+    if (previousKey === key) return;
+
+    sourceDataKeyRef.current.set(sourceId, key);
+    source.setData(data as any);
   }
 
   function ensureCustomSourcesAndLayers(map: Map) {
@@ -263,9 +422,13 @@ export default function MapView(props: Props) {
         source: SRC_LIDAR,
         paint: {
           "fill-color": "#00ffff",
-          "fill-opacity": 0.45,
+          "fill-opacity": [
+            "case",
+            ["boolean", ["feature-state", "selected"], false],
+            0.45,
+            0,
+          ],
         },
-        filter: ["==", ["get", "__selected"], true],
       });
     }
 
@@ -322,9 +485,13 @@ export default function MapView(props: Props) {
         source: SRC_MNT,
         paint: {
           "fill-color": "#00ffff",
-          "fill-opacity": 0.45,
+          "fill-opacity": [
+            "case",
+            ["boolean", ["feature-state", "selected"], false],
+            0.45,
+            0,
+          ],
         },
-        filter: ["==", ["get", "__selected"], true],
       });
     }
 
@@ -390,11 +557,7 @@ export default function MapView(props: Props) {
 
   function setDatasetVisibility(map: Map, dataset: Dataset, visible: boolean) {
     const visibility = visible ? "visible" : "none";
-
-    const layerIds =
-      dataset === "lidar"
-        ? [LYR_LIDAR, LYR_LIDAR_OUTLINE, LYR_LIDAR_SELECTED, LYR_LIDAR_LABELS]
-        : [LYR_MNT, LYR_MNT_OUTLINE, LYR_MNT_SELECTED, LYR_MNT_LABELS];
+    const layerIds = getSelectionLayerIds(dataset);
 
     for (const id of layerIds) {
       if (map.getLayer(id)) {
@@ -403,71 +566,17 @@ export default function MapView(props: Props) {
     }
   }
 
-  function setTileSourceData(map: Map, sourceId: string, features: TileFeature[]) {
-    const src = getGeoJsonSource(map, sourceId);
-    if (!src) return;
+  function computeGeometryCenter(
+    runtimeKey: string,
+    geometry: Geometry
+  ): [number, number] | null {
+    const cached = centerCacheRef.current.get(runtimeKey);
+    if (cached !== undefined) return cached;
 
-    const fc: FeatureCollectionOf<TileProps> = {
-      type: "FeatureCollection",
-      features,
-    };
-
-    src.setData(fc as any);
-  }
-
-  function setLabelSourceData(map: Map, sourceId: string, features: LabelFeature[]) {
-    const src = getGeoJsonSource(map, sourceId);
-    if (!src) return;
-
-    const fc: LabelFC = {
-      type: "FeatureCollection",
-      features,
-    };
-
-    src.setData(fc as any);
-  }
-
-  function setAoiSourceData(map: Map, aoi: AoiFeature | null) {
-    const src = getGeoJsonSource(map, SRC_AOI);
-    if (!src) return;
-
-    const data = aoi
-      ? {
-          type: "FeatureCollection",
-          features: [aoi],
-        }
-      : EMPTY_AOI_FC;
-
-    src.setData(data as any);
-  }
-
-  function setHoverSourceData(map: Map, tile: TileFeature | null) {
-    const src = getGeoJsonSource(map, SRC_HOVER);
-    if (!src) return;
-
-    if (!tile) {
-      src.setData(EMPTY_HOVER_FC as any);
-      return;
+    if (!geometry || !geometry.coordinates) {
+      centerCacheRef.current.set(runtimeKey, null);
+      return null;
     }
-
-    const fc: HoverFC = {
-      type: "FeatureCollection",
-      features: [
-        {
-          type: "Feature",
-          properties: {
-            __hover: true,
-          },
-          geometry: tile.geometry,
-        },
-      ],
-    };
-
-    src.setData(fc as any);
-  }
-
-  function computeGeometryCenter(geometry: Geometry): [number, number] | null {
-    if (!geometry || !geometry.coordinates) return null;
 
     let minX = Infinity;
     let minY = Infinity;
@@ -492,8 +601,8 @@ export default function MapView(props: Props) {
         return;
       }
 
-      for (const c of coords) {
-        visit(c);
+      for (const child of coords) {
+        visit(child);
       }
     };
 
@@ -505,31 +614,140 @@ export default function MapView(props: Props) {
       !Number.isFinite(maxX) ||
       !Number.isFinite(maxY)
     ) {
+      centerCacheRef.current.set(runtimeKey, null);
       return null;
     }
 
-    return [(minX + maxX) / 2, (minY + maxY) / 2];
+    const center: [number, number] = [(minX + maxX) / 2, (minY + maxY) / 2];
+    centerCacheRef.current.set(runtimeKey, center);
+    return center;
   }
 
-  function updateLabelSource(map: Map, features: TileFeature[], dataset: Dataset) {
+  function toRuntimeTiles(
+    rawTiles: TileFeature[],
+    dataset: Dataset
+  ): RuntimeTileFeature[] {
+    return rawTiles.map((tile) => {
+      const normalized = getNormalized(tile);
+      const normalizedId = normalized.id;
+      const normalizedProduct =
+        normalized.product === "lidar" || normalized.product === "mnt"
+          ? normalized.product
+          : dataset;
+
+      const runtimeKey = buildRuntimeKey(dataset, normalizedId);
+
+      return {
+        ...tile,
+        id: runtimeKey,
+        properties: {
+          ...tile.properties,
+          __dataset: dataset,
+          normalized_id: normalizedId,
+          normalized_product: normalizedProduct,
+          normalized_url: normalized.url,
+          normalized_name: normalized.name,
+          normalized_year: normalized.year,
+          normalized_provider:
+            normalized.provider ??
+            tile.properties?.provider ??
+            tile.properties?.SOURCE_DONNEES ??
+            tile.properties?.PROJET,
+        },
+      };
+    });
+  }
+
+  function setTileSourceData(
+    map: Map,
+    sourceId: string,
+    features: RuntimeTileFeature[]
+  ) {
+    const key = `${sourceId}::${features.map((f) => f.id).join("|")}`;
+
+    const fc: FeatureCollectionOf<TileProps> = {
+      type: "FeatureCollection",
+      features,
+    };
+
+    setSourceDataIfChanged(map, sourceId, key, fc);
+  }
+
+  function setLabelSourceData(map: Map, sourceId: string, features: LabelFeature[]) {
+    const key = `${sourceId}::${features
+      .map((f) => `${f.properties.normalized_id ?? ""}@${f.geometry.coordinates.join(",")}`)
+      .join("|")}`;
+
+    const fc: LabelFC = {
+      type: "FeatureCollection",
+      features,
+    };
+
+    setSourceDataIfChanged(map, sourceId, key, fc);
+  }
+
+  function setAoiSourceData(map: Map, aoi: AoiFeature | null) {
+    const data = aoi
+      ? {
+          type: "FeatureCollection",
+          features: [aoi],
+        }
+      : EMPTY_AOI_FC;
+
+    const key = aoi ? `aoi::${JSON.stringify(aoi.geometry)}` : "aoi::empty";
+    setSourceDataIfChanged(map, SRC_AOI, key, data);
+  }
+
+  function setHoverSourceData(map: Map, tile: RuntimeTileFeature | null) {
+    if (!tile) {
+      setSourceDataIfChanged(map, SRC_HOVER, "hover::empty", EMPTY_HOVER_FC);
+      return;
+    }
+
+    const fc: HoverFC = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {
+            __hover: true,
+          },
+          geometry: tile.geometry,
+        },
+      ],
+    };
+
+    setSourceDataIfChanged(map, SRC_HOVER, `hover::${tile.id}`, fc);
+  }
+
+  function updateLabelSource(
+    map: Map,
+    dataset: Dataset,
+    features: RuntimeTileFeature[]
+  ) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR_LABELS : SRC_MNT_LABELS;
+    const cacheKey = `${dataset}::${features.map((f) => f.id).join("|")}`;
+
+    const cached = labelCacheRef.current.get(cacheKey);
+    if (cached) {
+      setLabelSourceData(map, sourceId, cached);
+      return;
+    }
 
     const pointFeatures: LabelFeature[] = [];
 
     for (const feature of features) {
-      const center = computeGeometryCenter(feature.geometry);
+      const center = computeGeometryCenter(feature.id, feature.geometry);
       if (!center) continue;
-
-      const normalized = normalizeTile(feature);
 
       pointFeatures.push({
         type: "Feature",
         properties: {
           __dataset: dataset,
-          label_text: normalized.name ?? "",
-          normalized_id: normalized.id,
-          normalized_product: normalized.product,
-          normalized_url: normalized.url,
+          label_text: feature.properties.normalized_name ?? "",
+          normalized_id: feature.properties.normalized_id,
+          normalized_product: feature.properties.normalized_product,
+          normalized_url: feature.properties.normalized_url,
         },
         geometry: {
           type: "Point",
@@ -538,114 +756,145 @@ export default function MapView(props: Props) {
       });
     }
 
+    labelCacheRef.current.set(cacheKey, pointFeatures);
     setLabelSourceData(map, sourceId, pointFeatures);
   }
 
-  function setTilesOnMap(map: Map, dataset: Dataset, features: TileFeature[]) {
+  function setTilesOnMap(map: Map, dataset: Dataset, rawTiles: TileFeature[]) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
+    const runtimeTiles = toRuntimeTiles(rawTiles, dataset);
 
-    if (dataset === "lidar") {
-      currentLidarTilesRef.current = features;
-    } else {
-      currentMntTilesRef.current = features;
-    }
-
-    setTileSourceData(map, sourceId, features);
-    updateLabelSource(map, features, dataset);
+    setRuntimeTiles(dataset, runtimeTiles);
+    setTileSourceData(map, sourceId, runtimeTiles);
+    updateLabelSource(map, dataset, runtimeTiles);
   }
 
-  function applySelection(
+  function clearSelectionState(map: Map, dataset: Dataset) {
+    const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
+    const previous = selectedKeysRef.current[dataset];
+
+    for (const id of previous) {
+      try {
+        map.setFeatureState({ source: sourceId, id }, { selected: false });
+      } catch {
+        // ignore missing source/style race
+      }
+    }
+
+    selectedKeysRef.current[dataset] = new Set<string>();
+  }
+
+  function applySelectionState(
     map: Map,
     dataset: Dataset,
-    tiles: TileFeature[],
-    selected: TileFeature[]
+    nextSelected: Set<string>,
+    forceReapply = false
   ) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
+    const previous = selectedKeysRef.current[dataset];
 
-    const selectedKeys = new Set(
-      selected.map((tile) => {
-        const t = normalizeTile(tile);
-        return `${t.product}::${t.id}`;
-      })
-    );
-
-    const marked: TileFeature[] = tiles.map((tile) => {
-      const t = normalizeTile(tile);
-      const key = `${t.product}::${t.id}`;
-
-      return {
-        ...tile,
-        properties: {
-          ...tile.properties,
-          __selected: selectedKeys.has(key),
-        },
-      };
-    });
-
-    if (dataset === "lidar") {
-      currentLidarTilesRef.current = marked;
-    } else {
-      currentMntTilesRef.current = marked;
+    if (!forceReapply && areSetsEqual(previous, nextSelected)) {
+      return;
     }
 
-    setTileSourceData(map, sourceId, marked);
-    updateLabelSource(map, marked, dataset);
+    for (const id of previous) {
+      if (forceReapply || !nextSelected.has(id)) {
+        try {
+          map.setFeatureState({ source: sourceId, id }, { selected: false });
+        } catch {
+          // ignore missing source/style race
+        }
+      }
+    }
+
+    for (const id of nextSelected) {
+      if (forceReapply || !previous.has(id)) {
+        try {
+          map.setFeatureState({ source: sourceId, id }, { selected: true });
+        } catch {
+          // ignore missing source/style race
+        }
+      }
+    }
+
+    selectedKeysRef.current[dataset] = new Set(nextSelected);
   }
 
-  function findTileByKey(dataset: Dataset, id: string): TileFeature | null {
-    const tiles =
-      dataset === "lidar"
-        ? currentLidarTilesRef.current
-        : currentMntTilesRef.current;
+  function findTileByNormalizedId(
+    dataset: Dataset,
+    normalizedId: string
+  ): RuntimeTileFeature | null {
+    return lookupByNormalizedIdRef.current[dataset].get(normalizedId) ?? null;
+  }
 
-    for (const tile of tiles) {
-      const normalized = normalizeTile(tile);
-      if (normalized.id === id) return tile;
+  function getTileFromRenderedFeature(feature: unknown): RuntimeTileFeature | null {
+    const rendered = feature as {
+      properties?: Record<string, unknown>;
+      id?: string | number;
+    };
+
+    if (typeof rendered?.id === "string") {
+      const runtimeId = rendered.id;
+      const dataset = runtimeId.startsWith("lidar::")
+        ? "lidar"
+        : runtimeId.startsWith("mnt::")
+          ? "mnt"
+          : null;
+
+      if (dataset) {
+        return lookupByRuntimeIdRef.current[dataset].get(runtimeId) ?? null;
+      }
+    }
+
+    const props = rendered?.properties ?? {};
+    const normalizedId =
+      typeof props.normalized_id === "string" ? props.normalized_id : "";
+    const dataset =
+      props.normalized_product === "lidar" || props.__dataset === "lidar"
+        ? "lidar"
+        : props.normalized_product === "mnt" || props.__dataset === "mnt"
+          ? "mnt"
+          : null;
+
+    if (normalizedId && dataset) {
+      return findTileByNormalizedId(dataset, normalizedId);
     }
 
     return null;
   }
 
-  function getTileFromRenderedFeature(feature: unknown): TileFeature | null {
-    const rendered = feature as {
-      properties?: Record<string, unknown>;
-    };
-
-    const props = rendered?.properties ?? {};
-
-    const normalizedId =
-      typeof props.normalized_id === "string" ? props.normalized_id : "";
-    const normalizedProduct =
-      props.normalized_product === "lidar" || props.normalized_product === "mnt"
-        ? props.normalized_product
-        : props.__dataset === "lidar" || props.__dataset === "mnt"
-          ? props.__dataset
-          : null;
-
-    if (normalizedId && normalizedProduct) {
-      return findTileByKey(normalizedProduct, normalizedId);
-    }
-
-    return feature as TileFeature;
-  }
-
-  function getPanelInfoFromTile(tile: TileFeature): PanelInfo {
-    const normalized = normalizeTile(tile);
-    const p = tile.properties ?? {};
-
+  function getPanelInfoFromTile(tile: RuntimeTileFeature): PanelInfo {
     return {
-      id: normalized.id,
-      name: normalized.name,
-      product: normalized.product,
-      url: normalized.url,
-      year: normalized.year,
-      provider:
-        normalized.provider ??
-        p.provider ??
-        p.SOURCE_DONNEES ??
-        p.PROJET,
+      id: tile.properties.normalized_id,
+      name: tile.properties.normalized_name,
+      product: tile.properties.normalized_product,
+      url: tile.properties.normalized_url,
+      year: tile.properties.normalized_year,
+      provider: tile.properties.normalized_provider,
       raw: tile,
     };
+  }
+
+  function syncPanelInfo() {
+    const currentPanel = panelInfoRef.current;
+    if (!currentPanel) return;
+
+    const dataset =
+      currentPanel.product === "lidar" || currentPanel.product === "mnt"
+        ? currentPanel.product
+        : null;
+
+    if (!dataset) {
+      setPanelInfo(null);
+      return;
+    }
+
+    const freshTile = findTileByNormalizedId(dataset, currentPanel.id);
+    if (freshTile) {
+      setPanelInfo(getPanelInfoFromTile(freshTile));
+    } else {
+      setPanelInfo(null);
+    }
   }
 
   function openUrl(url: string) {
@@ -653,146 +902,19 @@ export default function MapView(props: Props) {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  async function refreshSelection(
+  function getInteractiveFeaturesAtPoint(
     map: Map,
-    lidarTiles: TileFeature[],
-    mntTiles: TileFeature[]
+    point: maplibregl.PointLike
   ) {
-    let selectedLidar: TileFeature[] = [];
-    let selectedMnt: TileFeature[] = [];
-
-    try {
-      const aoi = aoiRef.current;
-      selectedLidar = aoi ? intersectAoiWithTiles(aoi, lidarTiles) : [];
-      selectedMnt = aoi ? intersectAoiWithTiles(aoi, mntTiles) : [];
-    } catch (err) {
-      console.error("Erreur dans intersectAoiWithTiles :", err);
-      selectedLidar = [];
-      selectedMnt = [];
-    }
-
-    applySelection(map, "lidar", lidarTiles, selectedLidar);
-    applySelection(map, "mnt", mntTiles, selectedMnt);
-
-    onSelectionChangeRef.current([...selectedLidar, ...selectedMnt]);
-  }
-
-  async function refreshTiles(map: Map) {
-    if (!map.isStyleLoaded()) return;
-
-    ensureCustomSourcesAndLayers(map);
-
-    const requestId = ++requestSeqRef.current;
-
-    const showLidar = showLidarRef.current;
-    const showMnt = showMntRef.current;
-
-    if (!showLidar && !showMnt) {
-      setDatasetVisibility(map, "lidar", false);
-      setDatasetVisibility(map, "mnt", false);
-
-      setTilesOnMap(map, "lidar", []);
-      setTilesOnMap(map, "mnt", []);
-      setHoverSourceData(map, null);
-      hoverKeyRef.current = "";
-
-      onYearsChangeRef.current?.({
-        lidar: [],
-        mnt: [],
-      });
-
-      onSelectionChangeRef.current([]);
-      return;
-    }
-
-    setDatasetVisibility(map, "lidar", showLidar);
-    setDatasetVisibility(map, "mnt", showMnt);
-
-    const b = map.getBounds();
-    const bbox: [number, number, number, number] = [
-      b.getWest(),
-      b.getSouth(),
-      b.getEast(),
-      b.getNorth(),
-    ];
-
-    let lidarTiles: TileFeature[] = [];
-    let mntTiles: TileFeature[] = [];
-
-    if (showLidar) {
-      lidarTiles = await loadTilesForBBox("lidar", bbox, cacheRef.current);
-      if (requestId !== requestSeqRef.current) return;
-    }
-
-    if (showMnt) {
-      mntTiles = await loadTilesForBBox("mnt", bbox, cacheRef.current);
-      if (requestId !== requestSeqRef.current) return;
-    }
-
-    if (requestId !== requestSeqRef.current) return;
-
-    const lidarYears = extractAvailableYears(lidarTiles);
-    const mntYears = extractAvailableYears(mntTiles);
-
-    onYearsChangeRef.current?.({
-      lidar: lidarYears,
-      mnt: mntYears,
-    });
-
-    lidarTiles = filterTilesByYear(
-      lidarTiles,
-      yearFilterRef.current.lidar
-    );
-
-    mntTiles = filterTilesByYear(
-      mntTiles,
-      yearFilterRef.current.mnt
-    );
-
-    setTilesOnMap(map, "lidar", lidarTiles);
-    setTilesOnMap(map, "mnt", mntTiles);
-
-    await refreshSelection(map, lidarTiles, mntTiles);
-
-    const currentPanel = panelInfoRef.current;
-    if (currentPanel) {
-      const dataset =
-        currentPanel.product === "lidar" || currentPanel.product === "mnt"
-          ? currentPanel.product
-          : null;
-
-      if (dataset) {
-        const freshTile = findTileByKey(dataset, currentPanel.id);
-        if (freshTile) {
-          setPanelInfo(getPanelInfoFromTile(freshTile));
-        } else {
-          setPanelInfo(null);
-        }
-      } else {
-        setPanelInfo(null);
-      }
-    }
-  }
-
-  function scheduleRefresh(map: Map, delay = 120) {
-    if (refreshTimerRef.current !== null) {
-      window.clearTimeout(refreshTimerRef.current);
-    }
-
-    refreshTimerRef.current = window.setTimeout(() => {
-      refreshTimerRef.current = null;
-      void refreshTiles(map);
-    }, delay);
-  }
-
-  function getInteractiveFeaturesAtPoint(map: Map, point: maplibregl.PointLike) {
     return map.queryRenderedFeatures(point, {
       layers: [
         LYR_LIDAR,
         LYR_LIDAR_OUTLINE,
+        LYR_LIDAR_SELECTED,
         LYR_LIDAR_LABELS,
         LYR_MNT,
         LYR_MNT_OUTLINE,
+        LYR_MNT_SELECTED,
         LYR_MNT_LABELS,
       ],
     });
@@ -803,6 +925,286 @@ export default function MapView(props: Props) {
       hoverKeyRef.current = "";
       setHoverSourceData(map, null);
     }
+  }
+
+  function getOrCreateWorker() {
+    if (!workerSupportedRef.current) return null;
+    if (workerRef.current) return workerRef.current;
+
+    if (typeof Worker === "undefined") {
+      workerSupportedRef.current = false;
+      return null;
+    }
+
+    try {
+      workerRef.current = new Worker(
+        new URL("../selection/intersect.worker.ts", import.meta.url),
+        { type: "module" }
+      );
+      return workerRef.current;
+    } catch (error) {
+      console.warn("Web Worker indisponible, fallback synchrone.", error);
+      workerSupportedRef.current = false;
+      workerRef.current = null;
+      return null;
+    }
+  }
+
+  async function runIntersectWithWorker(
+    aoi: AoiFeature,
+    tiles: RuntimeTileFeature[]
+  ): Promise<Set<string>> {
+    const worker = getOrCreateWorker();
+    if (!worker) {
+      const selected = intersectAoiWithTiles(aoi, tiles);
+      return new Set(
+        selected
+          .map((tile) => String((tile as RuntimeTileFeature).id ?? ""))
+          .filter(Boolean)
+      );
+    }
+
+    return new Promise<Set<string>>((resolve, reject) => {
+      const requestId = `intersect-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const handleMessage = (event: MessageEvent<IntersectWorkerResponse>) => {
+        const data = event.data;
+        if (!data || data.requestId !== requestId) return;
+
+        worker.removeEventListener("message", handleMessage);
+        worker.removeEventListener("error", handleError);
+
+        if (data.error) {
+          reject(new Error(data.error));
+          return;
+        }
+
+        resolve(new Set((data.selectedIds ?? []).filter(Boolean)));
+      };
+
+      const handleError = (event: ErrorEvent) => {
+        worker.removeEventListener("message", handleMessage);
+        worker.removeEventListener("error", handleError);
+        reject(event.error ?? new Error(event.message));
+      };
+
+      worker.addEventListener("message", handleMessage);
+      worker.addEventListener("error", handleError);
+
+      const payload: IntersectWorkerRequest = {
+        requestId,
+        aoi,
+        tiles,
+      };
+
+      worker.postMessage(payload);
+    });
+  }
+
+  async function refreshSelection(
+    map: Map,
+    lidarTiles: RuntimeTileFeature[],
+    mntTiles: RuntimeTileFeature[]
+  ) {
+    const selectionRequestId = ++selectionSeqRef.current;
+    const aoi = aoiRef.current;
+
+    if (!aoi) {
+      applySelectionState(map, "lidar", new Set<string>(), true);
+      applySelectionState(map, "mnt", new Set<string>(), true);
+      onSelectionChangeRef.current([]);
+      return;
+    }
+
+    try {
+      const [selectedLidarIds, selectedMntIds] = await Promise.all([
+        lidarTiles.length ? runIntersectWithWorker(aoi, lidarTiles) : Promise.resolve(new Set<string>()),
+        mntTiles.length ? runIntersectWithWorker(aoi, mntTiles) : Promise.resolve(new Set<string>()),
+      ]);
+
+      if (selectionRequestId !== selectionSeqRef.current) return;
+
+      applySelectionState(map, "lidar", selectedLidarIds, true);
+      applySelectionState(map, "mnt", selectedMntIds, true);
+
+      const selectedLidarTiles = lidarTiles.filter((tile) =>
+        selectedLidarIds.has(tile.id)
+      );
+      const selectedMntTiles = mntTiles.filter((tile) =>
+        selectedMntIds.has(tile.id)
+      );
+
+      onSelectionChangeRef.current([
+        ...selectedLidarTiles,
+        ...selectedMntTiles,
+      ]);
+    } catch (error) {
+      console.error("Erreur dans refreshSelection :", error);
+
+      try {
+        const selectedLidarFallback = aoi
+          ? intersectAoiWithTiles(aoi, lidarTiles)
+          : [];
+        const selectedMntFallback = aoi ? intersectAoiWithTiles(aoi, mntTiles) : [];
+
+        const selectedLidarIds = new Set(
+          selectedLidarFallback
+            .map((tile) => String((tile as RuntimeTileFeature).id ?? ""))
+            .filter(Boolean)
+        );
+
+        const selectedMntIds = new Set(
+          selectedMntFallback
+            .map((tile) => String((tile as RuntimeTileFeature).id ?? ""))
+            .filter(Boolean)
+        );
+
+        if (selectionRequestId !== selectionSeqRef.current) return;
+
+        applySelectionState(map, "lidar", selectedLidarIds, true);
+        applySelectionState(map, "mnt", selectedMntIds, true);
+
+        onSelectionChangeRef.current([
+          ...selectedLidarFallback,
+          ...selectedMntFallback,
+        ]);
+      } catch (fallbackError) {
+        console.error("Erreur fallback intersection :", fallbackError);
+        applySelectionState(map, "lidar", new Set<string>(), true);
+        applySelectionState(map, "mnt", new Set<string>(), true);
+        onSelectionChangeRef.current([]);
+      }
+    }
+  }
+
+  async function refreshTiles(
+    map: Map,
+    options?: {
+      reloadData?: boolean;
+    }
+  ) {
+    if (!map.isStyleLoaded()) return;
+
+    ensureCustomSourcesAndLayers(map);
+
+    const requestId = ++requestSeqRef.current;
+    const reloadData = options?.reloadData ?? false;
+
+    const showLidar = showLidarRef.current;
+    const showMnt = showMntRef.current;
+
+    setDatasetVisibility(map, "lidar", showLidar);
+    setDatasetVisibility(map, "mnt", showMnt);
+
+    if (!showLidar && !showMnt) {
+      rawLidarTilesRef.current = [];
+      rawMntTilesRef.current = [];
+      setRuntimeTiles("lidar", []);
+      setRuntimeTiles("mnt", []);
+
+      setTileSourceData(map, SRC_LIDAR, []);
+      setTileSourceData(map, SRC_MNT, []);
+      setLabelSourceData(map, SRC_LIDAR_LABELS, []);
+      setLabelSourceData(map, SRC_MNT_LABELS, []);
+      clearSelectionState(map, "lidar");
+      clearSelectionState(map, "mnt");
+      clearHover(map);
+
+      onYearsChangeRef.current?.({ lidar: [], mnt: [] });
+      onSelectionChangeRef.current([]);
+      setPanelInfo(null);
+
+      lastViewStateRef.current = {
+        bboxKey: "",
+        showLidar: false,
+        showMnt: false,
+      };
+      return;
+    }
+
+    const bounds = map.getBounds();
+    const bbox: [number, number, number, number] = [
+      bounds.getWest(),
+      bounds.getSouth(),
+      bounds.getEast(),
+      bounds.getNorth(),
+    ];
+
+    const bboxKey = bbox.map((n) => n.toFixed(5)).join(",");
+    const mustReload =
+      reloadData ||
+      bboxKey !== lastViewStateRef.current.bboxKey ||
+      showLidar !== lastViewStateRef.current.showLidar ||
+      showMnt !== lastViewStateRef.current.showMnt ||
+      (showLidar && rawLidarTilesRef.current.length === 0) ||
+      (showMnt && rawMntTilesRef.current.length === 0);
+
+    let lidarRaw = rawLidarTilesRef.current;
+    let mntRaw = rawMntTilesRef.current;
+
+    if (mustReload) {
+      if (showLidar) {
+        lidarRaw = await loadTilesForBBox("lidar", bbox, cacheRef.current);
+        if (requestId !== requestSeqRef.current) return;
+      } else {
+        lidarRaw = [];
+      }
+
+      if (showMnt) {
+        mntRaw = await loadTilesForBBox("mnt", bbox, cacheRef.current);
+        if (requestId !== requestSeqRef.current) return;
+      } else {
+        mntRaw = [];
+      }
+
+      rawLidarTilesRef.current = lidarRaw;
+      rawMntTilesRef.current = mntRaw;
+
+      lastViewStateRef.current = {
+        bboxKey,
+        showLidar,
+        showMnt,
+      };
+    }
+
+    const lidarYears = extractAvailableYears(lidarRaw);
+    const mntYears = extractAvailableYears(mntRaw);
+
+    onYearsChangeRef.current?.({
+      lidar: lidarYears,
+      mnt: mntYears,
+    });
+
+    const lidarFiltered = showLidar
+      ? filterTilesByYear(lidarRaw, yearFilterRef.current.lidar)
+      : [];
+    const mntFiltered = showMnt
+      ? filterTilesByYear(mntRaw, yearFilterRef.current.mnt)
+      : [];
+
+    setTilesOnMap(map, "lidar", lidarFiltered);
+    setTilesOnMap(map, "mnt", mntFiltered);
+
+    clearHover(map);
+    syncPanelInfo();
+
+    const lidarRuntime = displayedLidarTilesRef.current;
+    const mntRuntime = displayedMntTilesRef.current;
+
+    queueMicrotask(() => {
+      void refreshSelection(map, lidarRuntime, mntRuntime);
+    });
+  }
+
+  function scheduleRefresh(map: Map, delay = 120, reloadData = false) {
+    if (refreshTimerRef.current !== null) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      void refreshTiles(map, { reloadData });
+    }, delay);
   }
 
   useEffect(() => {
@@ -837,7 +1239,7 @@ export default function MapView(props: Props) {
       }
     };
 
-    const handleMouseMove = (e: maplibregl.MapMouseEvent) => {
+    const handleMouseMove = rafThrottle((e: maplibregl.MapMouseEvent) => {
       const features = getInteractiveFeaturesAtPoint(map, e.point);
       const feature = features[0];
 
@@ -855,14 +1257,11 @@ export default function MapView(props: Props) {
         return;
       }
 
-      const normalized = normalizeTile(tile);
-      const key = `${normalized.product}::${normalized.id}`;
+      if (hoverKeyRef.current === tile.id) return;
 
-      if (hoverKeyRef.current === key) return;
-
-      hoverKeyRef.current = key;
+      hoverKeyRef.current = tile.id;
       setHoverSourceData(map, tile);
-    };
+    });
 
     const handleMouseLeave = () => {
       map.getCanvas().style.cursor = "";
@@ -873,7 +1272,7 @@ export default function MapView(props: Props) {
       ensureCustomSourcesAndLayers(map);
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
-      void refreshTiles(map);
+      void refreshTiles(map, { reloadData: true });
     });
 
     map.on("click", handleClick);
@@ -881,7 +1280,7 @@ export default function MapView(props: Props) {
     map.on("mouseout", handleMouseLeave);
 
     map.on("moveend", () => {
-      scheduleRefresh(map, 120);
+      scheduleRefresh(map, 120, true);
     });
 
     mapRef.current = map;
@@ -890,6 +1289,11 @@ export default function MapView(props: Props) {
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current);
         refreshTimerRef.current = null;
+      }
+
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
       }
 
       map.off("click", handleClick);
@@ -911,7 +1315,7 @@ export default function MapView(props: Props) {
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
       hoverKeyRef.current = "";
-      void refreshTiles(map);
+      void refreshTiles(map, { reloadData: false });
     });
   }, [styleSpec]);
 
@@ -919,16 +1323,12 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    try {
-      setAoiSourceData(map, aoiRef.current);
-      void refreshSelection(
-        map,
-        currentLidarTilesRef.current,
-        currentMntTilesRef.current
-      );
-    } catch (err) {
-      console.error("Erreur lors du chargement de l'AOI :", err);
-    }
+    setAoiSourceData(map, aoiRef.current);
+    void refreshSelection(
+      map,
+      displayedLidarTilesRef.current,
+      displayedMntTilesRef.current
+    );
   }, [props.aoi]);
 
   useEffect(() => {
@@ -936,7 +1336,7 @@ export default function MapView(props: Props) {
     if (!map || !map.isStyleLoaded()) return;
 
     setDatasetVisibility(map, "lidar", props.showLidar);
-    void refreshTiles(map);
+    void refreshTiles(map, { reloadData: true });
   }, [props.showLidar]);
 
   useEffect(() => {
@@ -944,14 +1344,14 @@ export default function MapView(props: Props) {
     if (!map || !map.isStyleLoaded()) return;
 
     setDatasetVisibility(map, "mnt", props.showMnt);
-    void refreshTiles(map);
+    void refreshTiles(map, { reloadData: true });
   }, [props.showMnt]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    void refreshTiles(map);
+    void refreshTiles(map, { reloadData: false });
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
   return (
