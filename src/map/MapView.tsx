@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl, { Map } from "maplibre-gl";
+import maplibregl from "maplibre-gl";
+import type { LngLatBoundsLike, Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import type {
@@ -194,6 +195,64 @@ function areSetsEqual(a: Set<string>, b: Set<string>) {
   return true;
 }
 
+function getGeometryBounds(geometry: Geometry): [number, number, number, number] | null {
+  if (!geometry || !(geometry as any).coordinates) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  const visit = (coords: unknown): void => {
+    if (!Array.isArray(coords)) return;
+
+    if (
+      coords.length >= 2 &&
+      typeof coords[0] === "number" &&
+      typeof coords[1] === "number"
+    ) {
+      const x = coords[0];
+      const y = coords[1];
+
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      return;
+    }
+
+    for (const child of coords) {
+      visit(child);
+    }
+  };
+
+  visit((geometry as any).coordinates);
+
+  if (
+    !Number.isFinite(minX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(maxX) ||
+    !Number.isFinite(maxY)
+  ) {
+    return null;
+  }
+
+  return [minX, minY, maxX, maxY];
+}
+
+function getAoiBounds(aoi: AoiFeature | null): LngLatBoundsLike | null {
+  if (!aoi?.geometry) return null;
+
+  const bounds = getGeometryBounds(aoi.geometry);
+  if (!bounds) return null;
+
+  const [minX, minY, maxX, maxY] = bounds;
+  return [
+    [minX, minY],
+    [maxX, maxY],
+  ];
+}
+
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -222,6 +281,7 @@ export default function MapView(props: Props) {
   const selectionSeqRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
   const hoverKeyRef = useRef<string>("");
+  const lastFittedAoiKeyRef = useRef<string>("");
 
   const showLidarRef = useRef(props.showLidar);
   const showMntRef = useRef(props.showMnt);
@@ -326,6 +386,8 @@ export default function MapView(props: Props) {
       ],
     };
   }, [props.basemaps]);
+
+  const styleSpecKey = useMemo(() => JSON.stringify(styleSpec), [styleSpec]);
 
   function getNormalized(tile: TileFeature) {
     const cached = normalizeCacheRef.current.get(tile);
@@ -597,7 +659,7 @@ export default function MapView(props: Props) {
     const cached = centerCacheRef.current.get(runtimeKey);
     if (cached !== undefined) return cached;
 
-    if (!geometry || !geometry.coordinates) {
+    if (!geometry || !(geometry as any).coordinates) {
       centerCacheRef.current.set(runtimeKey, null);
       return null;
     }
@@ -630,7 +692,7 @@ export default function MapView(props: Props) {
       }
     };
 
-    visit(geometry.coordinates);
+    visit((geometry as any).coordinates);
 
     if (
       !Number.isFinite(minX) ||
@@ -793,11 +855,42 @@ export default function MapView(props: Props) {
 
   function setTilesOnMap(map: Map, dataset: Dataset, rawTiles: TileFeature[]) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
+
+    perfMark(`setTilesOnMap:${dataset}:toRuntime:start`);
     const runtimeTiles = toRuntimeTiles(rawTiles, dataset);
+    perfMark(`setTilesOnMap:${dataset}:toRuntime:end`);
+    perfMeasure(
+      `setTilesOnMap:${dataset}:toRuntime`,
+      `setTilesOnMap:${dataset}:toRuntime:start`,
+      `setTilesOnMap:${dataset}:toRuntime:end`
+    );
+
+    if (import.meta.env.DEV) {
+      console.log(`[perf] setTilesOnMap:${dataset}:counts`, {
+        rawTiles: rawTiles.length,
+        runtimeTiles: runtimeTiles.length,
+      });
+    }
 
     setRuntimeTiles(dataset, runtimeTiles);
+
+    perfMark(`setTilesOnMap:${dataset}:setTileSource:start`);
     setTileSourceData(map, sourceId, runtimeTiles);
+    perfMark(`setTilesOnMap:${dataset}:setTileSource:end`);
+    perfMeasure(
+      `setTilesOnMap:${dataset}:setTileSource`,
+      `setTilesOnMap:${dataset}:setTileSource:start`,
+      `setTilesOnMap:${dataset}:setTileSource:end`
+    );
+
+    perfMark(`setTilesOnMap:${dataset}:labels:start`);
     updateLabelSource(map, dataset, runtimeTiles);
+    perfMark(`setTilesOnMap:${dataset}:labels:end`);
+    perfMeasure(
+      `setTilesOnMap:${dataset}:labels`,
+      `setTilesOnMap:${dataset}:labels:start`,
+      `setTilesOnMap:${dataset}:labels:end`
+    );
   }
 
   function clearSelectionState(map: Map, dataset: Dataset) {
@@ -956,6 +1049,24 @@ export default function MapView(props: Props) {
       hoverKeyRef.current = "";
       setHoverSourceData(map, null);
     }
+  }
+
+  function fitMapToAoi(map: Map, aoi: AoiFeature | null) {
+    if (!aoi) return;
+
+    const aoiKey = JSON.stringify(aoi.geometry);
+    if (lastFittedAoiKeyRef.current === aoiKey) return;
+
+    const bounds = getAoiBounds(aoi);
+    if (!bounds) return;
+
+    lastFittedAoiKeyRef.current = aoiKey;
+
+    map.fitBounds(bounds, {
+      padding: { top: 60, right: 60, bottom: 60, left: 60 },
+      duration: 700,
+      maxZoom: 15,
+    });
   }
 
   function getOrCreateWorker() {
@@ -1229,6 +1340,10 @@ export default function MapView(props: Props) {
           "refreshTiles:loadLidar:end"
         );
 
+        if (import.meta.env.DEV) {
+          console.log("[perf] refreshTiles:lidarRawCount", lidarRaw.length);
+        }
+
         if (requestId !== requestSeqRef.current) return;
       } else {
         lidarRaw = [];
@@ -1243,6 +1358,10 @@ export default function MapView(props: Props) {
           "refreshTiles:loadMnt:start",
           "refreshTiles:loadMnt:end"
         );
+
+        if (import.meta.env.DEV) {
+          console.log("[perf] refreshTiles:mntRawCount", mntRaw.length);
+        }
 
         if (requestId !== requestSeqRef.current) return;
       } else {
@@ -1282,6 +1401,13 @@ export default function MapView(props: Props) {
       "refreshTiles:filterYears:start",
       "refreshTiles:filterYears:end"
     );
+
+    if (import.meta.env.DEV) {
+      console.log("[perf] refreshTiles:filteredCounts", {
+        lidar: lidarFiltered.length,
+        mnt: mntFiltered.length,
+      });
+    }
 
     perfMark("refreshTiles:setTilesOnMap:start");
 
@@ -1407,7 +1533,11 @@ export default function MapView(props: Props) {
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
 
-      await refreshTiles(map, { reloadData: true });
+      if (aoiRef.current) {
+        fitMapToAoi(map, aoiRef.current);
+      } else {
+        await refreshTiles(map, { reloadData: true });
+      }
 
       perfMark("mapLoad:end");
       perfMeasure("mapLoad:total", "mapLoad:start", "mapLoad:end");
@@ -1446,6 +1576,11 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map) return;
 
+    const currentStyle = map.getStyle();
+    const currentStyleKey = currentStyle ? JSON.stringify(currentStyle) : "";
+
+    if (currentStyleKey === styleSpecKey) return;
+
     perfMark("styleReload:start");
 
     map.setStyle(styleSpec);
@@ -1455,23 +1590,33 @@ export default function MapView(props: Props) {
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
       hoverKeyRef.current = "";
-      await refreshTiles(map, { reloadData: false });
+
+      if (!aoiRef.current) {
+        await refreshTiles(map, { reloadData: false });
+      }
 
       perfMark("styleReload:end");
       perfMeasure("styleReload:total", "styleReload:start", "styleReload:end");
     });
-  }, [styleSpec]);
+  }, [styleSpec, styleSpecKey]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
     setAoiSourceData(map, aoiRef.current);
-    void refreshSelection(
-      map,
-      displayedLidarTilesRef.current,
-      displayedMntTilesRef.current
-    );
+
+    if (!props.aoi) {
+      lastFittedAoiKeyRef.current = "";
+      void refreshSelection(
+        map,
+        displayedLidarTilesRef.current,
+        displayedMntTilesRef.current
+      );
+      return;
+    }
+
+    fitMapToAoi(map, props.aoi);
   }, [props.aoi]);
 
   useEffect(() => {
