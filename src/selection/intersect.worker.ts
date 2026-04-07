@@ -43,3 +43,5 @@ self.onmessage = (event: MessageEvent<IntersectWorkerRequest>) => {
     self.postMessage(response);
   }
 };
+
+export {};

@@ -649,10 +649,17 @@ export default function MapView(props: Props) {
           normalized_name: normalized.name,
           normalized_year: normalized.year,
           normalized_provider:
-            normalized.provider ??
-            tile.properties?.provider ??
-            tile.properties?.SOURCE_DONNEES ??
-            tile.properties?.PROJET,
+		  normalized.provider ??
+		  tile.properties?.provider ??
+		  tile.properties?.SOURCE_DONNEES ??
+		  tile.properties?.PROJET
+			? String(
+				normalized.provider ??
+				  tile.properties?.provider ??
+				  tile.properties?.SOURCE_DONNEES ??
+				  tile.properties?.PROJET
+			  )
+			: undefined,
         },
       };
     });
