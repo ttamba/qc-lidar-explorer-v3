@@ -148,6 +148,30 @@ function rafThrottle<T extends (...args: any[]) => void>(fn: T): T {
   }) as T;
 }
 
+function perfMark(name: string) {
+  if (!import.meta.env.DEV) return;
+  performance.mark(name);
+}
+
+function perfMeasure(name: string, start: string, end: string) {
+  if (!import.meta.env.DEV) return;
+
+  try {
+    performance.measure(name, start, end);
+    const entries = performance.getEntriesByName(name);
+    const last = entries.at(-1);
+    if (last) {
+      console.log(`[perf] ${name}: ${last.duration.toFixed(1)} ms`);
+    }
+  } catch {
+    // ignore
+  } finally {
+    performance.clearMarks(start);
+    performance.clearMarks(end);
+    performance.clearMeasures(name);
+  }
+}
+
 function getGeoJsonSource(map: Map, sourceId: string) {
   return map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
 }
@@ -312,7 +336,7 @@ export default function MapView(props: Props) {
     return normalized;
   }
 
-    function setRuntimeTiles(dataset: Dataset, tiles: RuntimeTileFeature[]) {
+  function setRuntimeTiles(dataset: Dataset, tiles: RuntimeTileFeature[]) {
     if (dataset === "lidar") {
       displayedLidarTilesRef.current = tiles;
     } else {
@@ -649,17 +673,17 @@ export default function MapView(props: Props) {
           normalized_name: normalized.name,
           normalized_year: normalized.year,
           normalized_provider:
-		  normalized.provider ??
-		  tile.properties?.provider ??
-		  tile.properties?.SOURCE_DONNEES ??
-		  tile.properties?.PROJET
-			? String(
-				normalized.provider ??
-				  tile.properties?.provider ??
-				  tile.properties?.SOURCE_DONNEES ??
-				  tile.properties?.PROJET
-			  )
-			: undefined,
+            normalized.provider ??
+            tile.properties?.provider ??
+            tile.properties?.SOURCE_DONNEES ??
+            tile.properties?.PROJET
+              ? String(
+                  normalized.provider ??
+                    tile.properties?.provider ??
+                    tile.properties?.SOURCE_DONNEES ??
+                    tile.properties?.PROJET
+                )
+              : undefined,
         },
       };
     });
@@ -1013,6 +1037,8 @@ export default function MapView(props: Props) {
     lidarTiles: RuntimeTileFeature[],
     mntTiles: RuntimeTileFeature[]
   ) {
+    perfMark("refreshSelection:start");
+
     const selectionRequestId = ++selectionSeqRef.current;
     const aoi = aoiRef.current;
 
@@ -1020,19 +1046,39 @@ export default function MapView(props: Props) {
       applySelectionState(map, "lidar", new Set<string>(), true);
       applySelectionState(map, "mnt", new Set<string>(), true);
       onSelectionChangeRef.current([]);
+      perfMark("refreshSelection:end");
+      perfMeasure("refreshSelection:total", "refreshSelection:start", "refreshSelection:end");
       return;
     }
 
     try {
+      perfMark("refreshSelection:intersect:start");
+
       const [selectedLidarIds, selectedMntIds] = await Promise.all([
         lidarTiles.length ? runIntersectWithWorker(aoi, lidarTiles) : Promise.resolve(new Set<string>()),
         mntTiles.length ? runIntersectWithWorker(aoi, mntTiles) : Promise.resolve(new Set<string>()),
       ]);
 
+      perfMark("refreshSelection:intersect:end");
+      perfMeasure(
+        "refreshSelection:intersect",
+        "refreshSelection:intersect:start",
+        "refreshSelection:intersect:end"
+      );
+
       if (selectionRequestId !== selectionSeqRef.current) return;
+
+      perfMark("refreshSelection:featureState:start");
 
       applySelectionState(map, "lidar", selectedLidarIds, true);
       applySelectionState(map, "mnt", selectedMntIds, true);
+
+      perfMark("refreshSelection:featureState:end");
+      perfMeasure(
+        "refreshSelection:featureState",
+        "refreshSelection:featureState:start",
+        "refreshSelection:featureState:end"
+      );
 
       const selectedLidarTiles = lidarTiles.filter((tile) =>
         selectedLidarIds.has(tile.id)
@@ -1045,14 +1091,26 @@ export default function MapView(props: Props) {
         ...selectedLidarTiles,
         ...selectedMntTiles,
       ]);
+
+      perfMark("refreshSelection:end");
+      perfMeasure("refreshSelection:total", "refreshSelection:start", "refreshSelection:end");
     } catch (error) {
       console.error("Erreur dans refreshSelection :", error);
 
       try {
+        perfMark("refreshSelection:fallback:start");
+
         const selectedLidarFallback = aoi
           ? intersectAoiWithTiles(aoi, lidarTiles)
           : [];
         const selectedMntFallback = aoi ? intersectAoiWithTiles(aoi, mntTiles) : [];
+
+        perfMark("refreshSelection:fallback:end");
+        perfMeasure(
+          "refreshSelection:fallback",
+          "refreshSelection:fallback:start",
+          "refreshSelection:fallback:end"
+        );
 
         const selectedLidarIds = new Set(
           selectedLidarFallback
@@ -1075,11 +1133,17 @@ export default function MapView(props: Props) {
           ...selectedLidarFallback,
           ...selectedMntFallback,
         ]);
+
+        perfMark("refreshSelection:end");
+        perfMeasure("refreshSelection:total", "refreshSelection:start", "refreshSelection:end");
       } catch (fallbackError) {
         console.error("Erreur fallback intersection :", fallbackError);
         applySelectionState(map, "lidar", new Set<string>(), true);
         applySelectionState(map, "mnt", new Set<string>(), true);
         onSelectionChangeRef.current([]);
+
+        perfMark("refreshSelection:end");
+        perfMeasure("refreshSelection:total", "refreshSelection:start", "refreshSelection:end");
       }
     }
   }
@@ -1090,6 +1154,8 @@ export default function MapView(props: Props) {
       reloadData?: boolean;
     }
   ) {
+    perfMark("refreshTiles:start");
+
     if (!map.isStyleLoaded()) return;
 
     ensureCustomSourcesAndLayers(map);
@@ -1126,6 +1192,9 @@ export default function MapView(props: Props) {
         showLidar: false,
         showMnt: false,
       };
+
+      perfMark("refreshTiles:end");
+      perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
       return;
     }
 
@@ -1151,14 +1220,30 @@ export default function MapView(props: Props) {
 
     if (mustReload) {
       if (showLidar) {
+        perfMark("refreshTiles:loadLidar:start");
         lidarRaw = await loadTilesForBBox("lidar", bbox, cacheRef.current);
+        perfMark("refreshTiles:loadLidar:end");
+        perfMeasure(
+          "refreshTiles:loadLidar",
+          "refreshTiles:loadLidar:start",
+          "refreshTiles:loadLidar:end"
+        );
+
         if (requestId !== requestSeqRef.current) return;
       } else {
         lidarRaw = [];
       }
 
       if (showMnt) {
+        perfMark("refreshTiles:loadMnt:start");
         mntRaw = await loadTilesForBBox("mnt", bbox, cacheRef.current);
+        perfMark("refreshTiles:loadMnt:end");
+        perfMeasure(
+          "refreshTiles:loadMnt",
+          "refreshTiles:loadMnt:start",
+          "refreshTiles:loadMnt:end"
+        );
+
         if (requestId !== requestSeqRef.current) return;
       } else {
         mntRaw = [];
@@ -1182,6 +1267,8 @@ export default function MapView(props: Props) {
       mnt: mntYears,
     });
 
+    perfMark("refreshTiles:filterYears:start");
+
     const lidarFiltered = showLidar
       ? filterTilesByYear(lidarRaw, yearFilterRef.current.lidar)
       : [];
@@ -1189,8 +1276,24 @@ export default function MapView(props: Props) {
       ? filterTilesByYear(mntRaw, yearFilterRef.current.mnt)
       : [];
 
+    perfMark("refreshTiles:filterYears:end");
+    perfMeasure(
+      "refreshTiles:filterYears",
+      "refreshTiles:filterYears:start",
+      "refreshTiles:filterYears:end"
+    );
+
+    perfMark("refreshTiles:setTilesOnMap:start");
+
     setTilesOnMap(map, "lidar", lidarFiltered);
     setTilesOnMap(map, "mnt", mntFiltered);
+
+    perfMark("refreshTiles:setTilesOnMap:end");
+    perfMeasure(
+      "refreshTiles:setTilesOnMap",
+      "refreshTiles:setTilesOnMap:start",
+      "refreshTiles:setTilesOnMap:end"
+    );
 
     clearHover(map);
     syncPanelInfo();
@@ -1201,9 +1304,16 @@ export default function MapView(props: Props) {
     queueMicrotask(() => {
       void refreshSelection(map, lidarRuntime, mntRuntime);
     });
+
+    perfMark("refreshTiles:end");
+    perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
   }
 
   function scheduleRefresh(map: Map, delay = 120, reloadData = false) {
+    if (import.meta.env.DEV) {
+      console.log("[perf] scheduleRefresh", { delay, reloadData });
+    }
+
     if (refreshTimerRef.current !== null) {
       window.clearTimeout(refreshTimerRef.current);
     }
@@ -1275,20 +1385,39 @@ export default function MapView(props: Props) {
       clearHover(map);
     };
 
-    map.on("load", () => {
+    const handleMoveEnd = () => {
+      if (import.meta.env.DEV) {
+        const bounds = map.getBounds();
+        console.log("[perf] moveend", {
+          west: bounds.getWest(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          north: bounds.getNorth(),
+          zoom: map.getZoom(),
+        });
+      }
+
+      scheduleRefresh(map, 120, true);
+    };
+
+    const handleLoad = async () => {
+      perfMark("mapLoad:start");
+
       ensureCustomSourcesAndLayers(map);
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
-      void refreshTiles(map, { reloadData: true });
-    });
 
+      await refreshTiles(map, { reloadData: true });
+
+      perfMark("mapLoad:end");
+      perfMeasure("mapLoad:total", "mapLoad:start", "mapLoad:end");
+    };
+
+    map.on("load", handleLoad);
     map.on("click", handleClick);
     map.on("mousemove", handleMouseMove);
     map.on("mouseout", handleMouseLeave);
-
-    map.on("moveend", () => {
-      scheduleRefresh(map, 120, true);
-    });
+    map.on("moveend", handleMoveEnd);
 
     mapRef.current = map;
 
@@ -1303,9 +1432,11 @@ export default function MapView(props: Props) {
         workerRef.current = null;
       }
 
+      map.off("load", handleLoad);
       map.off("click", handleClick);
       map.off("mousemove", handleMouseMove);
       map.off("mouseout", handleMouseLeave);
+      map.off("moveend", handleMoveEnd);
       map.remove();
       mapRef.current = null;
     };
@@ -1315,14 +1446,19 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map) return;
 
+    perfMark("styleReload:start");
+
     map.setStyle(styleSpec);
 
-    map.once("styledata", () => {
+    map.once("styledata", async () => {
       ensureCustomSourcesAndLayers(map);
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
       hoverKeyRef.current = "";
-      void refreshTiles(map, { reloadData: false });
+      await refreshTiles(map, { reloadData: false });
+
+      perfMark("styleReload:end");
+      perfMeasure("styleReload:total", "styleReload:start", "styleReload:end");
     });
   }, [styleSpec]);
 
