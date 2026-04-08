@@ -1057,6 +1057,22 @@ export default function MapView(props: Props) {
     selectedKeysRef.current[dataset] = new Set<string>();
   }
 
+  function clearSelectionImmediately(map: Map) {
+    selectionSeqRef.current += 1;
+    requestSeqRef.current += 1;
+
+    clearSelectionState(map, "lidar");
+    clearSelectionState(map, "mnt");
+
+    sourceDataKeyRef.current.delete(SRC_LIDAR_SELECTED);
+    sourceDataKeyRef.current.delete(SRC_MNT_SELECTED);
+    setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
+    setSelectedSourceData(map, SRC_MNT_SELECTED, []);
+
+    onSelectionChangeRef.current([]);
+    clearHover(map);
+  }
+
   function applySelectionState(
     map: Map,
     dataset: Dataset,
@@ -1847,6 +1863,7 @@ export default function MapView(props: Props) {
 
     if (!props.aoi) {
       lastFittedAoiKeyRef.current = "";
+      clearSelectionImmediately(map);
       scheduleRefresh(map, {
         delay: 0,
         reloadData: false,
