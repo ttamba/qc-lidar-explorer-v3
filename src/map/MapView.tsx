@@ -1274,11 +1274,31 @@ export default function MapView(props: Props) {
     const requestId = ++requestSeqRef.current;
     const reloadData = options?.reloadData ?? false;
 
-    const showLidar = showLidarRef.current;
-    const showMnt = showMntRef.current;
+    const zoom = map.getZoom();
 
-    setDatasetVisibility(map, "lidar", showLidar);
-    setDatasetVisibility(map, "mnt", showMnt);
+	const minZoomForLidarLoad = 10;
+	const minZoomForMntLoad = 9;
+
+	const showLidar =
+	showLidarRef.current && zoom >= minZoomForLidarLoad;
+
+	const showMnt =
+	showMntRef.current && zoom >= minZoomForMntLoad;
+
+	if (import.meta.env.DEV) {
+	 console.log("[perf] zoom gating", {
+	  zoom,
+      minZoomForLidarLoad,
+      minZoomForMntLoad,
+      requestedShowLidar: showLidarRef.current,
+      requestedShowMnt: showMntRef.current,
+      effectiveShowLidar: showLidar,
+      effectiveShowMnt: showMnt,
+	});
+  }
+
+	setDatasetVisibility(map, "lidar", showLidar);
+	setDatasetVisibility(map, "mnt", showMnt);
 
     if (!showLidar && !showMnt) {
       rawLidarTilesRef.current = [];
@@ -1522,8 +1542,8 @@ export default function MapView(props: Props) {
           zoom: map.getZoom(),
         });
       }
-
-      scheduleRefresh(map, 120, true);
+	  
+	      scheduleRefresh(map, 120, true);
     };
 
     const handleLoad = async () => {
