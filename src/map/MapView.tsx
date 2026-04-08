@@ -1638,23 +1638,37 @@ export default function MapView(props: Props) {
   }, [styleSpec, styleSpecKey]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
+  const map = mapRef.current;
+  if (!map || !map.isStyleLoaded()) return;
 
-    setAoiSourceData(map, aoiRef.current);
+  setAoiSourceData(map, aoiRef.current);
 
-    if (!props.aoi) {
-      lastFittedAoiKeyRef.current = "";
-      void refreshSelection(
-        map,
-        displayedLidarTilesRef.current,
-        displayedMntTilesRef.current
-      );
-      return;
-    }
+  if (!props.aoi) {
+    lastFittedAoiKeyRef.current = "";
+    void refreshSelection(
+      map,
+      displayedLidarTilesRef.current,
+      displayedMntTilesRef.current
+    );
+    return;
+  }
 
+  const aoiKey = JSON.stringify(props.aoi.geometry);
+  const hasMovedToNewAoi = lastFittedAoiKeyRef.current !== aoiKey;
+
+  if (hasMovedToNewAoi) {
+    const handleAoiMoveEnd = () => {
+      map.off("moveend", handleAoiMoveEnd);
+      void refreshTiles(map, { reloadData: true });
+    };
+
+    map.on("moveend", handleAoiMoveEnd);
     fitMapToAoi(map, props.aoi);
-  }, [props.aoi]);
+    return;
+  }
+
+  void refreshTiles(map, { reloadData: true });
+}, [props.aoi]);
 
   useEffect(() => {
     const map = mapRef.current;
