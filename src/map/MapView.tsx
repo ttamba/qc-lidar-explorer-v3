@@ -95,20 +95,27 @@ const SRC_LIDAR = "lidar-src";
 const SRC_MNT = "mnt-src";
 const SRC_LIDAR_LABELS = "lidar-labels-src";
 const SRC_MNT_LABELS = "mnt-labels-src";
+const SRC_LIDAR_SELECTED = "lidar-selected-src";
+const SRC_MNT_SELECTED = "mnt-selected-src";
 const SRC_AOI = "aoi-src";
 const SRC_HOVER = "hover-src";
 
 const LYR_LIDAR = "lidar-lyr";
 const LYR_LIDAR_OUTLINE = "lidar-lyr-outline";
 const LYR_LIDAR_SELECTED = "lidar-selected-lyr";
+const LYR_LIDAR_SELECTED_FILL = "lidar-selected-fill-lyr";
+const LYR_LIDAR_SELECTED_OUTLINE = "lidar-selected-outline-lyr";
 const LYR_LIDAR_LABELS = "lidar-labels-lyr";
 
 const LYR_MNT = "mnt-lyr";
 const LYR_MNT_OUTLINE = "mnt-lyr-outline";
 const LYR_MNT_SELECTED = "mnt-selected-lyr";
+const LYR_MNT_SELECTED_FILL = "mnt-selected-fill-lyr";
+const LYR_MNT_SELECTED_OUTLINE = "mnt-selected-outline-lyr";
 const LYR_MNT_LABELS = "mnt-labels-lyr";
 
 const LYR_AOI = "aoi-lyr";
+const LYR_AOI_FILL = "aoi-fill-lyr";
 const LYR_HOVER_FILL = "hover-fill-lyr";
 const LYR_HOVER_OUTLINE = "hover-outline-lyr";
 
@@ -182,8 +189,22 @@ function getGeoJsonSource(map: Map, sourceId: string) {
 
 function getSelectionLayerIds(dataset: Dataset) {
   return dataset === "lidar"
-    ? [LYR_LIDAR, LYR_LIDAR_OUTLINE, LYR_LIDAR_SELECTED, LYR_LIDAR_LABELS]
-    : [LYR_MNT, LYR_MNT_OUTLINE, LYR_MNT_SELECTED, LYR_MNT_LABELS];
+    ? [
+        LYR_LIDAR,
+        LYR_LIDAR_OUTLINE,
+        LYR_LIDAR_SELECTED,
+        LYR_LIDAR_SELECTED_FILL,
+        LYR_LIDAR_SELECTED_OUTLINE,
+        LYR_LIDAR_LABELS,
+      ]
+    : [
+        LYR_MNT,
+        LYR_MNT_OUTLINE,
+        LYR_MNT_SELECTED,
+        LYR_MNT_SELECTED_FILL,
+        LYR_MNT_SELECTED_OUTLINE,
+        LYR_MNT_LABELS,
+      ];
 }
 
 function buildRuntimeKey(dataset: Dataset, normalizedId: string) {
@@ -443,6 +464,21 @@ export default function MapView(props: Props) {
     source.setData(data as any);
   }
 
+  function setSelectedSourceData(
+    map: Map,
+    sourceId: string,
+    features: RuntimeTileFeature[]
+  ) {
+    const key = `${sourceId}::${features.map((f) => f.id).join("|")}`;
+
+    const fc: FeatureCollectionOf<TileProps> = {
+      type: "FeatureCollection",
+      features,
+    };
+
+    setSourceDataIfChanged(map, sourceId, key, fc);
+  }
+
   function ensureCustomSourcesAndLayers(map: Map) {
     if (!map.getSource(SRC_LIDAR)) {
       map.addSource(SRC_LIDAR, {
@@ -453,6 +489,20 @@ export default function MapView(props: Props) {
 
     if (!map.getSource(SRC_MNT)) {
       map.addSource(SRC_MNT, {
+        type: "geojson",
+        data: EMPTY_TILE_FC as any,
+      });
+    }
+
+    if (!map.getSource(SRC_LIDAR_SELECTED)) {
+      map.addSource(SRC_LIDAR_SELECTED, {
+        type: "geojson",
+        data: EMPTY_TILE_FC as any,
+      });
+    }
+
+    if (!map.getSource(SRC_MNT_SELECTED)) {
+      map.addSource(SRC_MNT_SELECTED, {
         type: "geojson",
         data: EMPTY_TILE_FC as any,
       });
@@ -528,6 +578,31 @@ export default function MapView(props: Props) {
       });
     }
 
+    if (!map.getLayer(LYR_LIDAR_SELECTED_FILL)) {
+      map.addLayer({
+        id: LYR_LIDAR_SELECTED_FILL,
+        type: "fill",
+        source: SRC_LIDAR_SELECTED,
+        paint: {
+          "fill-color": "#22c55e",
+          "fill-opacity": 0.28,
+        },
+      });
+    }
+
+    if (!map.getLayer(LYR_LIDAR_SELECTED_OUTLINE)) {
+      map.addLayer({
+        id: LYR_LIDAR_SELECTED_OUTLINE,
+        type: "line",
+        source: SRC_LIDAR_SELECTED,
+        paint: {
+          "line-color": "#16a34a",
+          "line-width": 3,
+          "line-opacity": 1,
+        },
+      });
+    }
+
     if (!map.getLayer(LYR_LIDAR_LABELS)) {
       map.addLayer({
         id: LYR_LIDAR_LABELS,
@@ -591,6 +666,31 @@ export default function MapView(props: Props) {
       });
     }
 
+    if (!map.getLayer(LYR_MNT_SELECTED_FILL)) {
+      map.addLayer({
+        id: LYR_MNT_SELECTED_FILL,
+        type: "fill",
+        source: SRC_MNT_SELECTED,
+        paint: {
+          "fill-color": "#f59e0b",
+          "fill-opacity": 0.28,
+        },
+      });
+    }
+
+    if (!map.getLayer(LYR_MNT_SELECTED_OUTLINE)) {
+      map.addLayer({
+        id: LYR_MNT_SELECTED_OUTLINE,
+        type: "line",
+        source: SRC_MNT_SELECTED,
+        paint: {
+          "line-color": "#d97706",
+          "line-width": 3,
+          "line-opacity": 1,
+        },
+      });
+    }
+
     if (!map.getLayer(LYR_MNT_LABELS)) {
       map.addLayer({
         id: LYR_MNT_LABELS,
@@ -612,15 +712,27 @@ export default function MapView(props: Props) {
       });
     }
 
+    if (!map.getLayer(LYR_AOI_FILL)) {
+      map.addLayer({
+        id: LYR_AOI_FILL,
+        type: "fill",
+        source: SRC_AOI,
+        paint: {
+          "fill-color": "#dc2626",
+          "fill-opacity": 0.14,
+        },
+      });
+    }
+
     if (!map.getLayer(LYR_AOI)) {
       map.addLayer({
         id: LYR_AOI,
         type: "line",
         source: SRC_AOI,
         paint: {
-          "line-color": "#0066ff",
-          "line-width": 2.5,
-          "line-opacity": 0.9,
+          "line-color": "#dc2626",
+          "line-width": 3,
+          "line-opacity": 1,
         },
       });
     }
@@ -1045,10 +1157,14 @@ export default function MapView(props: Props) {
         LYR_LIDAR,
         LYR_LIDAR_OUTLINE,
         LYR_LIDAR_SELECTED,
+        LYR_LIDAR_SELECTED_FILL,
+        LYR_LIDAR_SELECTED_OUTLINE,
         LYR_LIDAR_LABELS,
         LYR_MNT,
         LYR_MNT_OUTLINE,
         LYR_MNT_SELECTED,
+        LYR_MNT_SELECTED_FILL,
+        LYR_MNT_SELECTED_OUTLINE,
         LYR_MNT_LABELS,
       ],
     });
@@ -1166,6 +1282,8 @@ export default function MapView(props: Props) {
     if (!aoi) {
       applySelectionState(map, "lidar", new Set<string>(), true);
       applySelectionState(map, "mnt", new Set<string>(), true);
+      setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
+      setSelectedSourceData(map, SRC_MNT_SELECTED, []);
       onSelectionChangeRef.current([]);
       perfMark("refreshSelection:end");
       perfMeasure("refreshSelection:total", "refreshSelection:start", "refreshSelection:end");
@@ -1207,6 +1325,9 @@ export default function MapView(props: Props) {
       const selectedMntTiles = mntTiles.filter((tile) =>
         selectedMntIds.has(tile.id)
       );
+
+      setSelectedSourceData(map, SRC_LIDAR_SELECTED, selectedLidarTiles);
+      setSelectedSourceData(map, SRC_MNT_SELECTED, selectedMntTiles);
 
       onSelectionChangeRef.current([
         ...selectedLidarTiles,
@@ -1250,6 +1371,17 @@ export default function MapView(props: Props) {
         applySelectionState(map, "lidar", selectedLidarIds, true);
         applySelectionState(map, "mnt", selectedMntIds, true);
 
+        setSelectedSourceData(
+          map,
+          SRC_LIDAR_SELECTED,
+          selectedLidarFallback as RuntimeTileFeature[]
+        );
+        setSelectedSourceData(
+          map,
+          SRC_MNT_SELECTED,
+          selectedMntFallback as RuntimeTileFeature[]
+        );
+
         onSelectionChangeRef.current([
           ...selectedLidarFallback,
           ...selectedMntFallback,
@@ -1261,6 +1393,8 @@ export default function MapView(props: Props) {
         console.error("Erreur fallback intersection :", fallbackError);
         applySelectionState(map, "lidar", new Set<string>(), true);
         applySelectionState(map, "mnt", new Set<string>(), true);
+        setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
+        setSelectedSourceData(map, SRC_MNT_SELECTED, []);
         onSelectionChangeRef.current([]);
 
         perfMark("refreshSelection:end");
@@ -1316,6 +1450,8 @@ export default function MapView(props: Props) {
 
       setTileSourceData(map, SRC_LIDAR, []);
       setTileSourceData(map, SRC_MNT, []);
+      setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
+      setSelectedSourceData(map, SRC_MNT_SELECTED, []);
       setLabelSourceData(map, SRC_LIDAR_LABELS, []);
       setLabelSourceData(map, SRC_MNT_LABELS, []);
       clearSelectionState(map, "lidar");
@@ -1638,37 +1774,37 @@ export default function MapView(props: Props) {
   }, [styleSpec, styleSpecKey]);
 
   useEffect(() => {
-  const map = mapRef.current;
-  if (!map || !map.isStyleLoaded()) return;
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
 
-  setAoiSourceData(map, aoiRef.current);
+    setAoiSourceData(map, aoiRef.current);
 
-  if (!props.aoi) {
-    lastFittedAoiKeyRef.current = "";
-    void refreshSelection(
-      map,
-      displayedLidarTilesRef.current,
-      displayedMntTilesRef.current
-    );
-    return;
-  }
+    if (!props.aoi) {
+      lastFittedAoiKeyRef.current = "";
+      void refreshSelection(
+        map,
+        displayedLidarTilesRef.current,
+        displayedMntTilesRef.current
+      );
+      return;
+    }
 
-  const aoiKey = JSON.stringify(props.aoi.geometry);
-  const hasMovedToNewAoi = lastFittedAoiKeyRef.current !== aoiKey;
+    const aoiKey = JSON.stringify(props.aoi.geometry);
+    const hasMovedToNewAoi = lastFittedAoiKeyRef.current !== aoiKey;
 
-  if (hasMovedToNewAoi) {
-    const handleAoiMoveEnd = () => {
-      map.off("moveend", handleAoiMoveEnd);
-      void refreshTiles(map, { reloadData: true });
-    };
+    if (hasMovedToNewAoi) {
+      const handleAoiMoveEnd = () => {
+        map.off("moveend", handleAoiMoveEnd);
+        void refreshTiles(map, { reloadData: true });
+      };
 
-    map.on("moveend", handleAoiMoveEnd);
-    fitMapToAoi(map, props.aoi);
-    return;
-  }
+      map.on("moveend", handleAoiMoveEnd);
+      fitMapToAoi(map, props.aoi);
+      return;
+    }
 
-  void refreshTiles(map, { reloadData: true });
-}, [props.aoi]);
+    void refreshTiles(map, { reloadData: true });
+  }, [props.aoi]);
 
   useEffect(() => {
     const map = mapRef.current;
