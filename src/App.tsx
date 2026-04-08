@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import MapView from "./map/MapView";
 import Basket from "./ui/Basket";
 import type { TileFeature, AoiFeature } from "./types";
@@ -7,17 +7,28 @@ import { importAoiFromFile } from "./aoi/importAoi";
 import { validateAoi } from "./aoi/validate";
 import { exportBundle } from "./export/exportBundle";
 
+type Dataset = "lidar" | "mnt";
+
 type AvailableYears = {
   lidar: string[];
   mnt: string[];
 };
 
+function getTileDataset(tile: TileFeature): Dataset | "" {
+  const rawValue =
+    tile.properties?.normalized_product ??
+    tile.properties?.product ??
+    tile.properties?.__dataset ??
+    "";
+
+  const value = String(rawValue).toLowerCase();
+  return value === "lidar" || value === "mnt" ? value : "";
+}
+
 export default function App() {
   const [selectedTiles, setSelectedTiles] = useState<TileFeature[]>([]);
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
-
-  const [showLidar, setShowLidar] = useState(true);
-  const [showMnt, setShowMnt] = useState(true);
+  const [selectedProduct, setSelectedProduct] = useState<Dataset>("lidar");
 
   const [yearFilter, setYearFilter] = useState<{
     lidar: string | "ALL";
@@ -56,14 +67,6 @@ export default function App() {
     setSelectedTiles([]);
   };
 
-  const lidarCount = selectedTiles.filter(
-    (t) => String(t.properties?.product ?? "").toLowerCase() === "lidar"
-  ).length;
-
-  const mntCount = selectedTiles.filter(
-    (t) => String(t.properties?.product ?? "").toLowerCase() === "mnt"
-  ).length;
-
   const clearSelection = () => {
     setSelectedTiles([]);
   };
@@ -75,78 +78,116 @@ export default function App() {
     });
   }
 
+  const lidarCount = useMemo(
+    () => selectedTiles.filter((tile) => getTileDataset(tile) === "lidar").length,
+    [selectedTiles]
+  );
+
+  const mntCount = useMemo(
+    () => selectedTiles.filter((tile) => getTileDataset(tile) === "mnt").length,
+    [selectedTiles]
+  );
+
+  const activeYears = selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
+  const activeYear = selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
+  const activeCount = selectedProduct === "lidar" ? lidarCount : mntCount;
+
+  function setActiveYear(nextYear: string | "ALL") {
+    setYearFilter((prev) =>
+      selectedProduct === "lidar"
+        ? { ...prev, lidar: nextYear }
+        : { ...prev, mnt: nextYear }
+    );
+  }
+
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <div
         style={{
-          width: 320,
+          width: 340,
           padding: 12,
           borderRight: "1px solid #ddd",
           overflowY: "auto",
+          background: "#fff",
         }}
       >
         <h3>Filtres</h3>
 
-        <label>
-          <input
-            type="checkbox"
-            checked={showLidar}
-            onChange={(e) => setShowLidar(e.target.checked)}
-          />{" "}
-          LiDAR
-        </label>
+        <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
+          <legend style={{ fontWeight: 700, marginBottom: 8 }}>Produit</legend>
 
-        <br />
+          <label style={{ display: "block", marginBottom: 6 }}>
+            <input
+              type="radio"
+              name="selected-product"
+              checked={selectedProduct === "lidar"}
+              onChange={() => setSelectedProduct("lidar")}
+            />{" "}
+            LiDAR
+          </label>
 
-        <label>
-          <input
-            type="checkbox"
-            checked={showMnt}
-            onChange={(e) => setShowMnt(e.target.checked)}
-          />{" "}
-          MNT
-        </label>
+          <label style={{ display: "block" }}>
+            <input
+              type="radio"
+              name="selected-product"
+              checked={selectedProduct === "mnt"}
+              onChange={() => setSelectedProduct("mnt")}
+            />{" "}
+            MNT
+          </label>
+        </fieldset>
 
-        <div style={{ marginTop: 12 }}>
-          <label>LiDAR année</label>
-          <select
-            value={yearFilter.lidar}
-            onChange={(e) =>
-              setYearFilter((prev) => ({
-                ...prev,
-                lidar: e.target.value,
-              }))
-            }
-            style={{ width: "100%" }}
-          >
-            <option value="ALL">Toutes</option>
-            {availableYears.lidar.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>
+            {selectedProduct === "lidar" ? "LiDAR" : "MNT"} — année
+          </div>
+
+          <fieldset style={{ border: "none", padding: 0, margin: 0 }}>
+            <label style={{ display: "block", marginBottom: 6 }}>
+              <input
+                type="radio"
+                name={`year-filter-${selectedProduct}`}
+                checked={activeYear === "ALL"}
+                onChange={() => setActiveYear("ALL")}
+              />{" "}
+              Toutes les années
+            </label>
+
+            {activeYears.map((year) => (
+              <label key={year} style={{ display: "block", marginBottom: 6 }}>
+                <input
+                  type="radio"
+                  name={`year-filter-${selectedProduct}`}
+                  checked={activeYear === year}
+                  onChange={() => setActiveYear(year)}
+                />{" "}
+                {year}
+              </label>
             ))}
-          </select>
+          </fieldset>
         </div>
 
-        <div style={{ marginTop: 8 }}>
-          <label>MNT année</label>
-          <select
-            value={yearFilter.mnt}
-            onChange={(e) =>
-              setYearFilter((prev) => ({
-                ...prev,
-                mnt: e.target.value,
-              }))
-            }
-            style={{ width: "100%" }}
-          >
-            <option value="ALL">Toutes</option>
-            {availableYears.mnt.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: 12,
+            color: "#4b5563",
+            background: "#f9fafb",
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: 10,
+            lineHeight: 1.5,
+          }}
+        >
+          <div>
+            <strong>Produit actif :</strong> {selectedProduct.toUpperCase()}
+          </div>
+          <div>
+            <strong>Année active :</strong> {activeYear === "ALL" ? "Toutes" : activeYear}
+          </div>
+          <div>
+            <strong>Tuiles sélectionnées ({selectedProduct.toUpperCase()}) :</strong> {activeCount}
+          </div>
         </div>
 
         <h3 style={{ marginTop: 16 }}>Charger la zone d'étude</h3>
@@ -182,6 +223,9 @@ export default function App() {
         <div>Total: {selectedTiles.length}</div>
         <div>LiDAR: {lidarCount}</div>
         <div>MNT: {mntCount}</div>
+        <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+          Le produit actif contrôle l’affichage et le filtre annuel.
+        </div>
 
         <button
           onClick={handleExport}
@@ -203,8 +247,7 @@ export default function App() {
         <MapView
           aoi={aoi}
           basemaps={null}
-          showLidar={showLidar}
-          showMnt={showMnt}
+          selectedProduct={selectedProduct}
           yearFilter={yearFilter}
           onYearsChange={setAvailableYears}
           onSelectionChange={setSelectedTiles}
