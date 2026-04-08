@@ -132,6 +132,9 @@ const EMPTY_HOVER_FC: HoverFC = {
   features: [],
 };
 
+const MIN_ZOOM_FOR_LIDAR_LOAD = 10;
+const MIN_ZOOM_FOR_MNT_LOAD = 9;
+
 function rafThrottle<T extends (...args: any[]) => void>(fn: T): T {
   let scheduled = false;
   let lastArgs: any[] = [];
@@ -282,6 +285,7 @@ export default function MapView(props: Props) {
   const refreshTimerRef = useRef<number | null>(null);
   const hoverKeyRef = useRef<string>("");
   const lastFittedAoiKeyRef = useRef<string>("");
+  const hasInitialLoadCompletedRef = useRef(false);
 
   const showLidarRef = useRef(props.showLidar);
   const showMntRef = useRef(props.showMnt);
@@ -332,6 +336,7 @@ export default function MapView(props: Props) {
 
   const [panelInfo, setPanelInfo] = useState<PanelInfo | null>(null);
   const panelInfoRef = useRef<PanelInfo | null>(null);
+  const [mapZoom, setMapZoom] = useState<number>(8);
 
   useEffect(() => {
     showLidarRef.current = props.showLidar;
@@ -388,6 +393,11 @@ export default function MapView(props: Props) {
   }, [props.basemaps]);
 
   const styleSpecKey = useMemo(() => JSON.stringify(styleSpec), [styleSpec]);
+
+  const showLidarZoomHint =
+    props.showLidar && mapZoom < MIN_ZOOM_FOR_LIDAR_LOAD;
+  const showMntZoomHint =
+    props.showMnt && mapZoom < MIN_ZOOM_FOR_MNT_LOAD;
 
   function getNormalized(tile: TileFeature) {
     const cached = normalizeCacheRef.current.get(tile);
@@ -1275,30 +1285,28 @@ export default function MapView(props: Props) {
     const reloadData = options?.reloadData ?? false;
 
     const zoom = map.getZoom();
+    setMapZoom(zoom);
 
-	const minZoomForLidarLoad = 10;
-	const minZoomForMntLoad = 9;
+    const showLidar =
+      showLidarRef.current && zoom >= MIN_ZOOM_FOR_LIDAR_LOAD;
 
-	const showLidar =
-	showLidarRef.current && zoom >= minZoomForLidarLoad;
+    const showMnt =
+      showMntRef.current && zoom >= MIN_ZOOM_FOR_MNT_LOAD;
 
-	const showMnt =
-	showMntRef.current && zoom >= minZoomForMntLoad;
+    if (import.meta.env.DEV) {
+      console.log("[perf] zoom gating", {
+        zoom,
+        minZoomForLidarLoad: MIN_ZOOM_FOR_LIDAR_LOAD,
+        minZoomForMntLoad: MIN_ZOOM_FOR_MNT_LOAD,
+        requestedShowLidar: showLidarRef.current,
+        requestedShowMnt: showMntRef.current,
+        effectiveShowLidar: showLidar,
+        effectiveShowMnt: showMnt,
+      });
+    }
 
-	if (import.meta.env.DEV) {
-	 console.log("[perf] zoom gating", {
-	  zoom,
-      minZoomForLidarLoad,
-      minZoomForMntLoad,
-      requestedShowLidar: showLidarRef.current,
-      requestedShowMnt: showMntRef.current,
-      effectiveShowLidar: showLidar,
-      effectiveShowMnt: showMnt,
-	});
-  }
-
-	setDatasetVisibility(map, "lidar", showLidar);
-	setDatasetVisibility(map, "mnt", showMnt);
+    setDatasetVisibility(map, "lidar", showLidar);
+    setDatasetVisibility(map, "mnt", showMnt);
 
     if (!showLidar && !showMnt) {
       rawLidarTilesRef.current = [];
@@ -1480,6 +1488,7 @@ export default function MapView(props: Props) {
       zoom: 8,
     });
 
+    setMapZoom(8);
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     const handleClick = (e: maplibregl.MapMouseEvent) => {
@@ -1532,6 +1541,9 @@ export default function MapView(props: Props) {
     };
 
     const handleMoveEnd = () => {
+      const nextZoom = map.getZoom();
+      setMapZoom(nextZoom);
+
       if (import.meta.env.DEV) {
         const bounds = map.getBounds();
         console.log("[perf] moveend", {
@@ -1539,11 +1551,11 @@ export default function MapView(props: Props) {
           south: bounds.getSouth(),
           east: bounds.getEast(),
           north: bounds.getNorth(),
-          zoom: map.getZoom(),
+          zoom: nextZoom,
         });
       }
-	  
-	      scheduleRefresh(map, 120, true);
+
+      scheduleRefresh(map, 120, true);
     };
 
     const handleLoad = async () => {
@@ -1552,6 +1564,9 @@ export default function MapView(props: Props) {
       ensureCustomSourcesAndLayers(map);
       setAoiSourceData(map, aoiRef.current);
       setHoverSourceData(map, null);
+
+      hasInitialLoadCompletedRef.current = true;
+      setMapZoom(map.getZoom());
 
       if (aoiRef.current) {
         fitMapToAoi(map, aoiRef.current);
@@ -1595,6 +1610,8 @@ export default function MapView(props: Props) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+
+    if (!hasInitialLoadCompletedRef.current) return;
 
     const currentStyle = map.getStyle();
     const currentStyleKey = currentStyle ? JSON.stringify(currentStyle) : "";
@@ -1643,17 +1660,25 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    setDatasetVisibility(map, "lidar", props.showLidar);
+    setDatasetVisibility(
+      map,
+      "lidar",
+      props.showLidar && mapZoom >= MIN_ZOOM_FOR_LIDAR_LOAD
+    );
     void refreshTiles(map, { reloadData: true });
-  }, [props.showLidar]);
+  }, [props.showLidar, mapZoom]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    setDatasetVisibility(map, "mnt", props.showMnt);
+    setDatasetVisibility(
+      map,
+      "mnt",
+      props.showMnt && mapZoom >= MIN_ZOOM_FOR_MNT_LOAD
+    );
     void refreshTiles(map, { reloadData: true });
-  }, [props.showMnt]);
+  }, [props.showMnt, mapZoom]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1678,6 +1703,44 @@ export default function MapView(props: Props) {
           inset: 0,
         }}
       />
+
+      {(showLidarZoomHint || showMntZoomHint) && (
+        <div
+          style={{
+            position: "absolute",
+            left: 12,
+            bottom: 12,
+            zIndex: 20,
+            maxWidth: 420,
+            background: "rgba(255,255,255,0.96)",
+            border: "1px solid #d1d5db",
+            borderRadius: 10,
+            boxShadow: "0 10px 24px rgba(0,0,0,0.12)",
+            padding: "10px 12px",
+            fontSize: 13,
+            lineHeight: 1.45,
+            color: "#111827",
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            Zoom insuffisant pour certaines couches
+          </div>
+
+          {showLidarZoomHint && (
+            <div style={{ marginBottom: showMntZoomHint ? 4 : 0 }}>
+              LiDAR disponible à partir du zoom{" "}
+              <strong>{MIN_ZOOM_FOR_LIDAR_LOAD}</strong>.
+            </div>
+          )}
+
+          {showMntZoomHint && (
+            <div>
+              MNT disponible à partir du zoom{" "}
+              <strong>{MIN_ZOOM_FOR_MNT_LOAD}</strong>.
+            </div>
+          )}
+        </div>
+      )}
 
       {panelInfo && (
         <div
