@@ -211,6 +211,21 @@ function buildRuntimeKey(dataset: Dataset, normalizedId: string) {
   return `${dataset}::${normalizedId}`;
 }
 
+function buildAoiKey(aoi: AoiFeature | null) {
+  return aoi ? JSON.stringify(aoi.geometry) : "aoi::empty";
+}
+
+function buildFeatureSignature(
+  features: Array<{ id?: string; properties?: { normalized_id?: string } }>
+) {
+  if (features.length === 0) return "0";
+
+  const first = features[0];
+  const last = features[features.length - 1];
+
+  return `${features.length}:${first.id ?? first.properties?.normalized_id ?? ""}:${last.id ?? last.properties?.normalized_id ?? ""}`;
+}
+
 function areSetsEqual(a: Set<string>, b: Set<string>) {
   if (a.size !== b.size) return false;
   for (const value of a) {
@@ -307,6 +322,12 @@ export default function MapView(props: Props) {
   const hoverKeyRef = useRef<string>("");
   const lastFittedAoiKeyRef = useRef<string>("");
   const hasInitialLoadCompletedRef = useRef(false);
+  const lastRefreshKeyRef = useRef<string>("");
+  const lastAppliedStyleKeyRef = useRef<string>("");
+  const pendingRefreshOptionsRef = useRef<{
+    reloadData: boolean;
+    reason: string;
+  } | null>(null);
 
   const showLidarRef = useRef(props.showLidar);
   const showMntRef = useRef(props.showMnt);
@@ -469,7 +490,7 @@ export default function MapView(props: Props) {
     sourceId: string,
     features: RuntimeTileFeature[]
   ) {
-    const key = `${sourceId}::${features.map((f) => f.id).join("|")}`;
+    const key = `${sourceId}::${buildFeatureSignature(features)}`;
 
     const fc: FeatureCollectionOf<TileProps> = {
       type: "FeatureCollection",
@@ -878,7 +899,7 @@ export default function MapView(props: Props) {
     sourceId: string,
     features: RuntimeTileFeature[]
   ) {
-    const key = `${sourceId}::${features.map((f) => f.id).join("|")}`;
+    const key = `${sourceId}::${buildFeatureSignature(features)}`;
 
     const fc: FeatureCollectionOf<TileProps> = {
       type: "FeatureCollection",
@@ -889,9 +910,7 @@ export default function MapView(props: Props) {
   }
 
   function setLabelSourceData(map: Map, sourceId: string, features: LabelFeature[]) {
-    const key = `${sourceId}::${features
-      .map((f) => `${f.properties.normalized_id ?? ""}@${f.geometry.coordinates.join(",")}`)
-      .join("|")}`;
+    const key = `${sourceId}::${features.length}:${features[0]?.properties.normalized_id ?? ""}:${features[features.length - 1]?.properties.normalized_id ?? ""}`;
 
     const fc: LabelFC = {
       type: "FeatureCollection",
@@ -941,7 +960,7 @@ export default function MapView(props: Props) {
     features: RuntimeTileFeature[]
   ) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR_LABELS : SRC_MNT_LABELS;
-    const cacheKey = `${dataset}::${features.map((f) => f.id).join("|")}`;
+    const cacheKey = `${dataset}::${buildFeatureSignature(features)}`;
 
     const cached = labelCacheRef.current.get(cacheKey);
     if (cached) {
@@ -1006,7 +1025,15 @@ export default function MapView(props: Props) {
     );
 
     perfMark(`setTilesOnMap:${dataset}:labels:start`);
-    updateLabelSource(map, dataset, runtimeTiles);
+    if (map.getZoom() >= 11) {
+      updateLabelSource(map, dataset, runtimeTiles);
+    } else {
+      setLabelSourceData(
+        map,
+        dataset === "lidar" ? SRC_LIDAR_LABELS : SRC_MNT_LABELS,
+        []
+      );
+    }
     perfMark(`setTilesOnMap:${dataset}:labels:end`);
     perfMeasure(
       `setTilesOnMap:${dataset}:labels`,
@@ -1280,8 +1307,8 @@ export default function MapView(props: Props) {
     const aoi = aoiRef.current;
 
     if (!aoi) {
-      applySelectionState(map, "lidar", new Set<string>(), true);
-      applySelectionState(map, "mnt", new Set<string>(), true);
+      applySelectionState(map, "lidar", new Set<string>(), false);
+      applySelectionState(map, "mnt", new Set<string>(), false);
       setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
       setSelectedSourceData(map, SRC_MNT_SELECTED, []);
       onSelectionChangeRef.current([]);
@@ -1309,8 +1336,8 @@ export default function MapView(props: Props) {
 
       perfMark("refreshSelection:featureState:start");
 
-      applySelectionState(map, "lidar", selectedLidarIds, true);
-      applySelectionState(map, "mnt", selectedMntIds, true);
+      applySelectionState(map, "lidar", selectedLidarIds, false);
+      applySelectionState(map, "mnt", selectedMntIds, false);
 
       perfMark("refreshSelection:featureState:end");
       perfMeasure(
@@ -1368,8 +1395,8 @@ export default function MapView(props: Props) {
 
         if (selectionRequestId !== selectionSeqRef.current) return;
 
-        applySelectionState(map, "lidar", selectedLidarIds, true);
-        applySelectionState(map, "mnt", selectedMntIds, true);
+        applySelectionState(map, "lidar", selectedLidarIds, false);
+        applySelectionState(map, "mnt", selectedMntIds, false);
 
         setSelectedSourceData(
           map,
@@ -1391,8 +1418,8 @@ export default function MapView(props: Props) {
         perfMeasure("refreshSelection:total", "refreshSelection:start", "refreshSelection:end");
       } catch (fallbackError) {
         console.error("Erreur fallback intersection :", fallbackError);
-        applySelectionState(map, "lidar", new Set<string>(), true);
-        applySelectionState(map, "mnt", new Set<string>(), true);
+        applySelectionState(map, "lidar", new Set<string>(), false);
+        applySelectionState(map, "mnt", new Set<string>(), false);
         setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
         setSelectedSourceData(map, SRC_MNT_SELECTED, []);
         onSelectionChangeRef.current([]);
@@ -1419,7 +1446,6 @@ export default function MapView(props: Props) {
     const reloadData = options?.reloadData ?? false;
 
     const zoom = map.getZoom();
-    setMapZoom(zoom);
 
     const showLidar =
       showLidarRef.current && zoom >= MIN_ZOOM_FOR_LIDAR_LOAD;
@@ -1467,6 +1493,7 @@ export default function MapView(props: Props) {
         showLidar: false,
         showMnt: false,
       };
+      lastRefreshKeyRef.current = "";
 
       perfMark("refreshTiles:end");
       perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
@@ -1482,6 +1509,22 @@ export default function MapView(props: Props) {
     ];
 
     const bboxKey = bbox.map((n) => n.toFixed(5)).join(",");
+    const aoiKey = buildAoiKey(aoiRef.current);
+    const refreshKey = [
+      bboxKey,
+      showLidar ? "1" : "0",
+      showMnt ? "1" : "0",
+      yearFilterRef.current.lidar,
+      yearFilterRef.current.mnt,
+      aoiKey,
+    ].join("|");
+
+    if (!reloadData && refreshKey === lastRefreshKeyRef.current) {
+      perfMark("refreshTiles:end");
+      perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
+      return;
+    }
+
     const mustReload =
       reloadData ||
       bboxKey !== lastViewStateRef.current.bboxKey ||
@@ -1595,14 +1638,33 @@ export default function MapView(props: Props) {
       void refreshSelection(map, lidarRuntime, mntRuntime);
     });
 
+    lastRefreshKeyRef.current = refreshKey;
+
     perfMark("refreshTiles:end");
     perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
   }
 
-  function scheduleRefresh(map: Map, delay = 120, reloadData = false) {
-    if (import.meta.env.DEV) {
-      console.log("[perf] scheduleRefresh", { delay, reloadData });
+  function scheduleRefresh(
+    map: Map,
+    options?: {
+      delay?: number;
+      reloadData?: boolean;
+      reason?: string;
     }
+  ) {
+    const delay = options?.delay ?? 80;
+    const reloadData = options?.reloadData ?? false;
+    const reason = options?.reason ?? "unspecified";
+
+    if (import.meta.env.DEV) {
+      console.log("[perf] scheduleRefresh", { delay, reloadData, reason });
+    }
+
+    const pending = pendingRefreshOptionsRef.current;
+    pendingRefreshOptionsRef.current = {
+      reloadData: pending ? pending.reloadData || reloadData : reloadData,
+      reason,
+    };
 
     if (refreshTimerRef.current !== null) {
       window.clearTimeout(refreshTimerRef.current);
@@ -1610,7 +1672,14 @@ export default function MapView(props: Props) {
 
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null;
-      void refreshTiles(map, { reloadData });
+
+      const nextOptions = pendingRefreshOptionsRef.current ?? {
+        reloadData: false,
+        reason: "timeout",
+      };
+
+      pendingRefreshOptionsRef.current = null;
+      void refreshTiles(map, { reloadData: nextOptions.reloadData });
     }, delay);
   }
 
@@ -1624,6 +1693,7 @@ export default function MapView(props: Props) {
       zoom: 8,
     });
 
+    lastAppliedStyleKeyRef.current = styleSpecKey;
     setMapZoom(8);
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
@@ -1691,7 +1761,7 @@ export default function MapView(props: Props) {
         });
       }
 
-      scheduleRefresh(map, 120, true);
+      scheduleRefresh(map, { delay: 80, reloadData: false, reason: "moveend" });
     };
 
     const handleLoad = async () => {
@@ -1741,21 +1811,18 @@ export default function MapView(props: Props) {
       map.remove();
       mapRef.current = null;
     };
-  }, [styleSpec]);
+  }, [styleSpec, styleSpecKey]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-
     if (!hasInitialLoadCompletedRef.current) return;
-
-    const currentStyle = map.getStyle();
-    const currentStyleKey = currentStyle ? JSON.stringify(currentStyle) : "";
-
-    if (currentStyleKey === styleSpecKey) return;
+    if (lastAppliedStyleKeyRef.current === styleSpecKey) return;
 
     perfMark("styleReload:start");
 
+    lastAppliedStyleKeyRef.current = styleSpecKey;
+    lastRefreshKeyRef.current = "";
     map.setStyle(styleSpec);
 
     map.once("styledata", async () => {
@@ -1764,9 +1831,7 @@ export default function MapView(props: Props) {
       setHoverSourceData(map, null);
       hoverKeyRef.current = "";
 
-      if (!aoiRef.current) {
-        await refreshTiles(map, { reloadData: false });
-      }
+      await refreshTiles(map, { reloadData: false });
 
       perfMark("styleReload:end");
       perfMeasure("styleReload:total", "styleReload:start", "styleReload:end");
@@ -1778,24 +1843,29 @@ export default function MapView(props: Props) {
     if (!map || !map.isStyleLoaded()) return;
 
     setAoiSourceData(map, aoiRef.current);
+    lastRefreshKeyRef.current = "";
 
     if (!props.aoi) {
       lastFittedAoiKeyRef.current = "";
-      void refreshSelection(
-        map,
-        displayedLidarTilesRef.current,
-        displayedMntTilesRef.current
-      );
+      scheduleRefresh(map, {
+        delay: 0,
+        reloadData: false,
+        reason: "aoi-cleared",
+      });
       return;
     }
 
-    const aoiKey = JSON.stringify(props.aoi.geometry);
+    const aoiKey = buildAoiKey(props.aoi);
     const hasMovedToNewAoi = lastFittedAoiKeyRef.current !== aoiKey;
 
     if (hasMovedToNewAoi) {
       const handleAoiMoveEnd = () => {
         map.off("moveend", handleAoiMoveEnd);
-        void refreshTiles(map, { reloadData: true });
+        scheduleRefresh(map, {
+          delay: 0,
+          reloadData: true,
+          reason: "aoi-fit-moveend",
+        });
       };
 
       map.on("moveend", handleAoiMoveEnd);
@@ -1803,38 +1873,35 @@ export default function MapView(props: Props) {
       return;
     }
 
-    void refreshTiles(map, { reloadData: true });
+    scheduleRefresh(map, {
+      delay: 0,
+      reloadData: false,
+      reason: "aoi-updated",
+    });
   }, [props.aoi]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    setDatasetVisibility(
-      map,
-      "lidar",
-      props.showLidar && mapZoom >= MIN_ZOOM_FOR_LIDAR_LOAD
-    );
-    void refreshTiles(map, { reloadData: true });
-  }, [props.showLidar, mapZoom]);
+    lastRefreshKeyRef.current = "";
+    scheduleRefresh(map, {
+      delay: 0,
+      reloadData: true,
+      reason: "visibility-change",
+    });
+  }, [props.showLidar, props.showMnt]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    setDatasetVisibility(
-      map,
-      "mnt",
-      props.showMnt && mapZoom >= MIN_ZOOM_FOR_MNT_LOAD
-    );
-    void refreshTiles(map, { reloadData: true });
-  }, [props.showMnt, mapZoom]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-
-    void refreshTiles(map, { reloadData: false });
+    lastRefreshKeyRef.current = "";
+    scheduleRefresh(map, {
+      delay: 0,
+      reloadData: false,
+      reason: "year-filter-change",
+    });
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
   return (
