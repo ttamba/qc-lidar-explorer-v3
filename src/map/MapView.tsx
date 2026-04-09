@@ -929,15 +929,18 @@ export default function MapView(props: Props) {
       lastViewStateRef.current = { bboxKey, activeDataset };
     }
 
+    const aoi = aoiRef.current;
+    const lidarTilesForYears = aoi && lidarRaw.length ? intersectAoiWithTiles(aoi, lidarRaw) : lidarRaw;
+    const mntTilesForYears = aoi && mntRaw.length ? intersectAoiWithTiles(aoi, mntRaw) : mntRaw;
+
     onYearsChangeRef.current?.({
-      lidar: extractAvailableYears(lidarRaw),
-      mnt: extractAvailableYears(mntRaw),
+      lidar: extractAvailableYears(lidarTilesForYears),
+      mnt: extractAvailableYears(mntTilesForYears),
     });
 
     const lidarFiltered = showLidar ? filterTilesByYear(lidarRaw, yearFilterRef.current.lidar) : [];
     const mntFiltered = showMnt ? filterTilesByYear(mntRaw, yearFilterRef.current.mnt) : [];
 
-    const aoi = aoiRef.current;
     const lidarDisplayTiles = aoi && lidarFiltered.length ? intersectAoiWithTiles(aoi, lidarFiltered) : lidarFiltered;
     const mntDisplayTiles = aoi && mntFiltered.length ? intersectAoiWithTiles(aoi, mntFiltered) : mntFiltered;
 
