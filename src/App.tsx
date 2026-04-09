@@ -5,6 +5,11 @@ import type { TileFeature, AoiFeature } from "./types";
 
 import { importAoiFromFile } from "./aoi/importAoi";
 import { validateAoi } from "./aoi/validate";
+import {
+  SUPPORTED_SOURCE_CRS,
+  reprojectGeoJsonToWgs84,
+  type SupportedSourceCrsCode,
+} from "./aoi/reprojectAoi";
 import { exportBundle } from "./export/exportBundle";
 
 type Dataset = "lidar" | "mnt";
@@ -36,10 +41,20 @@ function getTileProduct(tile: TileFeature): Dataset | "" {
   return "";
 }
 
+function isWgs84ValidationError(message: string): boolean {
+  return /WGS84|EPSG:4326/i.test(message);
+}
+
 export default function App() {
   const [selectedTiles, setSelectedTiles] = useState<TileFeature[]>([]);
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
+
+  const [pendingAoiRaw, setPendingAoiRaw] = useState<any | null>(null);
+  const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
+  const [selectedSourceCrs, setSelectedSourceCrs] =
+    useState<SupportedSourceCrsCode>("EPSG:32188");
+  const [isReprojectingAoi, setIsReprojectingAoi] = useState(false);
 
   const [selectedProduct, setSelectedProduct] = useState<Dataset>("lidar");
 
@@ -62,7 +77,8 @@ export default function App() {
     selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
 
   const activeSelectionCount = useMemo(() => {
-    return selectedTiles.filter((tile) => getTileProduct(tile) === selectedProduct).length;
+    return selectedTiles.filter((tile) => getTileProduct(tile) === selectedProduct)
+      .length;
   }, [selectedProduct, selectedTiles]);
 
   const lidarCount = useMemo(() => {
@@ -80,15 +96,37 @@ export default function App() {
     try {
       setLoadingAoi(true);
       setAoiError("");
+      setPendingAoiRaw(null);
+      setPendingAoiFileName("");
 
       const geo = await importAoiFromFile(file);
-      const valid = validateAoi(geo);
 
-      setAoi(valid);
-      setSelectedTiles([]);
+      try {
+        const valid = validateAoi(geo);
+        setAoi(valid);
+        setSelectedTiles([]);
+        return;
+      } catch (validationError: any) {
+        const message = validationError?.message ?? "Erreur lors du chargement AOI";
+
+        if (isWgs84ValidationError(message)) {
+          setAoi(null);
+          setSelectedTiles([]);
+          setPendingAoiRaw(geo);
+          setPendingAoiFileName(file.name);
+          setAoiError(
+            `${message}\n\nLe fichier semble projeté. Choisissez le CRS source ci-dessous pour tenter une reprojection automatique vers WGS84.`
+          );
+          return;
+        }
+
+        throw validationError;
+      }
     } catch (err: any) {
       setAoi(null);
       setSelectedTiles([]);
+      setPendingAoiRaw(null);
+      setPendingAoiFileName("");
       setAoiError(err?.message ?? "Erreur lors du chargement AOI");
     } finally {
       setLoadingAoi(false);
@@ -96,10 +134,42 @@ export default function App() {
     }
   }
 
+  async function handleReprojectAndLoadAoi() {
+    if (!pendingAoiRaw) return;
+
+    try {
+      setIsReprojectingAoi(true);
+      setAoiError("");
+
+      const reprojected = reprojectGeoJsonToWgs84(
+        pendingAoiRaw,
+        selectedSourceCrs
+      );
+      const valid = validateAoi(reprojected);
+
+      setAoi(valid);
+      setSelectedTiles([]);
+      setPendingAoiRaw(null);
+      setPendingAoiFileName("");
+      setAoiError("");
+    } catch (err: any) {
+      setAoi(null);
+      setSelectedTiles([]);
+      setAoiError(
+        err?.message ??
+          "La reprojection automatique a échoué. Vérifiez le CRS source choisi."
+      );
+    } finally {
+      setIsReprojectingAoi(false);
+    }
+  }
+
   function clearAoi() {
     setAoi(null);
     setSelectedTiles([]);
     setAoiError("");
+    setPendingAoiRaw(null);
+    setPendingAoiFileName("");
   }
 
   function clearSelection() {
@@ -109,7 +179,6 @@ export default function App() {
   function handleSelectedProductChange(product: Dataset) {
     setSelectedProduct(product);
     setSelectedTiles([]);
-    setAoiError("");
   }
 
   function handleYearChange(value: string) {
@@ -124,7 +193,8 @@ export default function App() {
     setAvailableYears(years);
 
     const nextYears = selectedProduct === "lidar" ? years.lidar : years.mnt;
-    const currentYear = selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
+    const currentYear =
+      selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
 
     if (currentYear !== "ALL" && !nextYears.includes(currentYear)) {
       setYearFilter((prev) => ({
@@ -256,7 +326,9 @@ export default function App() {
             color: "#374151",
           }}
         >
-          <div><strong>Produit actif :</strong> {selectedProduct.toUpperCase()}</div>
+          <div>
+            <strong>Produit actif :</strong> {selectedProduct.toUpperCase()}
+          </div>
           <div>
             <strong>Année active :</strong>{" "}
             {activeYear === "ALL" ? "Toutes" : activeYear}
@@ -296,6 +368,64 @@ export default function App() {
           </div>
         )}
 
+        {pendingAoiRaw && (
+          <div
+            style={{
+              marginTop: 8,
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #f59e0b",
+              background: "#fffbeb",
+              color: "#92400e",
+              fontSize: 12,
+              lineHeight: 1.45,
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>
+              Reprojection assistée
+            </div>
+
+            {pendingAoiFileName && (
+              <div style={{ marginBottom: 8 }}>
+                <strong>Fichier :</strong> {pendingAoiFileName}
+              </div>
+            )}
+
+            <label style={{ display: "block", marginBottom: 6 }}>
+              CRS source
+            </label>
+
+            <select
+              value={selectedSourceCrs}
+              onChange={(e) =>
+                setSelectedSourceCrs(
+                  e.target.value as SupportedSourceCrsCode
+                )
+              }
+              style={{ width: "100%", marginBottom: 8 }}
+              disabled={isReprojectingAoi}
+            >
+              {SUPPORTED_SOURCE_CRS.map((crs) => (
+                <option key={crs.code} value={crs.code}>
+                  {crs.code} — {crs.label}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={handleReprojectAndLoadAoi}
+              disabled={isReprojectingAoi}
+            >
+              {isReprojectingAoi ? "Reprojection..." : "Reprojeter et charger"}
+            </button>
+
+            <div style={{ marginTop: 8 }}>
+              La reprojection cible toujours <strong>WGS84 (EPSG:4326)</strong>.
+            </div>
+          </div>
+        )}
+
         {aoi && !aoiError && (
           <div style={{ marginTop: 8 }}>
             <div style={{ color: "green", fontSize: 12, marginBottom: 6 }}>
@@ -308,7 +438,7 @@ export default function App() {
           </div>
         )}
 
-        {!aoi && !loadingAoi && !aoiError && (
+        {!aoi && !loadingAoi && !aoiError && !pendingAoiRaw && (
           <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
             Charge une AOI pour activer la sélection.
           </div>
