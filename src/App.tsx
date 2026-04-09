@@ -7,35 +7,21 @@ import { importAoiFromFile } from "./aoi/importAoi";
 import { validateAoi } from "./aoi/validate";
 import {
   SUPPORTED_SOURCE_CRS,
+  autoDetectSourceCrsFromGeoJson,
   reprojectGeoJsonToWgs84,
   type SupportedSourceCrsCode,
 } from "./aoi/reprojectAoi";
 import { exportBundle } from "./export/exportBundle";
 
 type Dataset = "lidar" | "mnt";
-
-type AvailableYears = {
-  lidar: string[];
-  mnt: string[];
-};
-
-type YearFilter = {
-  lidar: string | "ALL";
-  mnt: string | "ALL";
-};
+type AvailableYears = { lidar: string[]; mnt: string[] };
+type YearFilter = { lidar: string | "ALL"; mnt: string | "ALL" };
 
 function getTileProduct(tile: TileFeature): Dataset | "" {
   const props = (tile?.properties ?? {}) as Record<string, unknown>;
-
   const raw =
-    props.normalized_product ??
-    props.product ??
-    props.PRODUIT ??
-    props.type_produit ??
-    "";
-
+    props.normalized_product ?? props.product ?? props.PRODUIT ?? props.type_produit ?? "";
   const value = String(raw).toLowerCase();
-
   if (value === "lidar") return "lidar";
   if (value === "mnt") return "mnt";
   return "";
@@ -54,40 +40,38 @@ export default function App() {
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
   const [selectedSourceCrs, setSelectedSourceCrs] =
     useState<SupportedSourceCrsCode>("EPSG:32188");
+  const [detectedSourceCrs, setDetectedSourceCrs] =
+    useState<SupportedSourceCrsCode | null>(null);
   const [isReprojectingAoi, setIsReprojectingAoi] = useState(false);
 
   const [selectedProduct, setSelectedProduct] = useState<Dataset>("lidar");
-
   const [yearFilter, setYearFilter] = useState<YearFilter>({
     lidar: "ALL",
     mnt: "ALL",
   });
-
   const [availableYears, setAvailableYears] = useState<AvailableYears>({
     lidar: [],
     mnt: [],
   });
-
   const [loadingAoi, setLoadingAoi] = useState(false);
 
   const activeYears =
     selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
-
   const activeYear =
     selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
 
-  const activeSelectionCount = useMemo(() => {
-    return selectedTiles.filter((tile) => getTileProduct(tile) === selectedProduct)
-      .length;
-  }, [selectedProduct, selectedTiles]);
-
-  const lidarCount = useMemo(() => {
-    return selectedTiles.filter((tile) => getTileProduct(tile) === "lidar").length;
-  }, [selectedTiles]);
-
-  const mntCount = useMemo(() => {
-    return selectedTiles.filter((tile) => getTileProduct(tile) === "mnt").length;
-  }, [selectedTiles]);
+  const activeSelectionCount = useMemo(
+    () => selectedTiles.filter((tile) => getTileProduct(tile) === selectedProduct).length,
+    [selectedProduct, selectedTiles]
+  );
+  const lidarCount = useMemo(
+    () => selectedTiles.filter((tile) => getTileProduct(tile) === "lidar").length,
+    [selectedTiles]
+  );
+  const mntCount = useMemo(
+    () => selectedTiles.filter((tile) => getTileProduct(tile) === "mnt").length,
+    [selectedTiles]
+  );
 
   async function handleAoiFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -98,6 +82,7 @@ export default function App() {
       setAoiError("");
       setPendingAoiRaw(null);
       setPendingAoiFileName("");
+      setDetectedSourceCrs(null);
 
       const geo = await importAoiFromFile(file);
 
@@ -110,12 +95,17 @@ export default function App() {
         const message = validationError?.message ?? "Erreur lors du chargement AOI";
 
         if (isWgs84ValidationError(message)) {
+          const detected = autoDetectSourceCrsFromGeoJson(geo);
           setAoi(null);
           setSelectedTiles([]);
           setPendingAoiRaw(geo);
           setPendingAoiFileName(file.name);
+          setDetectedSourceCrs(detected);
+          setSelectedSourceCrs(detected ?? "EPSG:32188");
           setAoiError(
-            `${message}\n\nLe fichier semble projeté. Choisissez le CRS source ci-dessous pour tenter une reprojection automatique vers WGS84.`
+            detected
+              ? `${message}\n\nCRS suggéré automatiquement : ${detected}. Vérifiez au besoin puis lancez la reprojection vers WGS84.`
+              : `${message}\n\nLe fichier semble projeté. Choisissez le CRS source ci-dessous pour tenter une reprojection automatique vers WGS84.`
           );
           return;
         }
@@ -127,6 +117,7 @@ export default function App() {
       setSelectedTiles([]);
       setPendingAoiRaw(null);
       setPendingAoiFileName("");
+      setDetectedSourceCrs(null);
       setAoiError(err?.message ?? "Erreur lors du chargement AOI");
     } finally {
       setLoadingAoi(false);
@@ -141,16 +132,14 @@ export default function App() {
       setIsReprojectingAoi(true);
       setAoiError("");
 
-      const reprojected = reprojectGeoJsonToWgs84(
-        pendingAoiRaw,
-        selectedSourceCrs
-      );
+      const reprojected = reprojectGeoJsonToWgs84(pendingAoiRaw, selectedSourceCrs);
       const valid = validateAoi(reprojected);
 
       setAoi(valid);
       setSelectedTiles([]);
       setPendingAoiRaw(null);
       setPendingAoiFileName("");
+      setDetectedSourceCrs(null);
       setAoiError("");
     } catch (err: any) {
       setAoi(null);
@@ -170,6 +159,7 @@ export default function App() {
     setAoiError("");
     setPendingAoiRaw(null);
     setPendingAoiFileName("");
+    setDetectedSourceCrs(null);
   }
 
   function clearSelection() {
@@ -191,7 +181,6 @@ export default function App() {
 
   function handleYearsChange(years: AvailableYears) {
     setAvailableYears(years);
-
     const nextYears = selectedProduct === "lidar" ? years.lidar : years.mnt;
     const currentYear =
       selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
@@ -205,10 +194,7 @@ export default function App() {
   }
 
   async function handleExport() {
-    await exportBundle({
-      aoi,
-      tiles: selectedTiles,
-    });
+    await exportBundle({ aoi, tiles: selectedTiles });
   }
 
   return (
@@ -227,15 +213,7 @@ export default function App() {
         <div style={{ marginTop: 8 }}>
           <div style={{ fontWeight: 700, marginBottom: 8 }}>Produit</div>
 
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 8,
-              cursor: "pointer",
-            }}
-          >
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }}>
             <input
               type="radio"
               name="selected-product"
@@ -245,14 +223,7 @@ export default function App() {
             LiDAR
           </label>
 
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              cursor: "pointer",
-            }}
-          >
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
             <input
               type="radio"
               name="selected-product"
@@ -268,15 +239,7 @@ export default function App() {
             {selectedProduct === "lidar" ? "LiDAR" : "MNT"} — année
           </div>
 
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 8,
-              cursor: "pointer",
-            }}
-          >
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }}>
             <input
               type="radio"
               name="selected-year"
@@ -289,13 +252,7 @@ export default function App() {
           {activeYears.map((year) => (
             <label
               key={year}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                cursor: "pointer",
-              }}
+              style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "pointer" }}
             >
               <input
                 type="radio"
@@ -326,16 +283,10 @@ export default function App() {
             color: "#374151",
           }}
         >
+          <div><strong>Produit actif :</strong> {selectedProduct.toUpperCase()}</div>
+          <div><strong>Année active :</strong> {activeYear === "ALL" ? "Toutes" : activeYear}</div>
           <div>
-            <strong>Produit actif :</strong> {selectedProduct.toUpperCase()}
-          </div>
-          <div>
-            <strong>Année active :</strong>{" "}
-            {activeYear === "ALL" ? "Toutes" : activeYear}
-          </div>
-          <div>
-            <strong>Tuiles sélectionnées ({selectedProduct.toUpperCase()}) :</strong>{" "}
-            {activeSelectionCount}
+            <strong>Tuiles sélectionnées ({selectedProduct.toUpperCase()}) :</strong> {activeSelectionCount}
           </div>
         </div>
 
@@ -346,7 +297,6 @@ export default function App() {
         </div>
 
         <input type="file" onChange={handleAoiFile} />
-
         {loadingAoi && <div style={{ marginTop: 8 }}>Chargement AOI...</div>}
 
         {aoiError && (
@@ -381,9 +331,7 @@ export default function App() {
               lineHeight: 1.45,
             }}
           >
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>
-              Reprojection assistée
-            </div>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Reprojection assistée</div>
 
             {pendingAoiFileName && (
               <div style={{ marginBottom: 8 }}>
@@ -391,17 +339,26 @@ export default function App() {
               </div>
             )}
 
-            <label style={{ display: "block", marginBottom: 6 }}>
-              CRS source
-            </label>
+            {detectedSourceCrs && (
+              <div
+                style={{
+                  marginBottom: 8,
+                  padding: 8,
+                  borderRadius: 8,
+                  background: "#ecfccb",
+                  border: "1px solid #84cc16",
+                  color: "#365314",
+                }}
+              >
+                <strong>CRS suggéré :</strong> {detectedSourceCrs}
+              </div>
+            )}
+
+            <label style={{ display: "block", marginBottom: 6 }}>CRS source</label>
 
             <select
               value={selectedSourceCrs}
-              onChange={(e) =>
-                setSelectedSourceCrs(
-                  e.target.value as SupportedSourceCrsCode
-                )
-              }
+              onChange={(e) => setSelectedSourceCrs(e.target.value as SupportedSourceCrsCode)}
               style={{ width: "100%", marginBottom: 8 }}
               disabled={isReprojectingAoi}
             >
@@ -412,11 +369,7 @@ export default function App() {
               ))}
             </select>
 
-            <button
-              type="button"
-              onClick={handleReprojectAndLoadAoi}
-              disabled={isReprojectingAoi}
-            >
+            <button type="button" onClick={handleReprojectAndLoadAoi} disabled={isReprojectingAoi}>
               {isReprojectingAoi ? "Reprojection..." : "Reprojeter et charger"}
             </button>
 
@@ -428,13 +381,8 @@ export default function App() {
 
         {aoi && !aoiError && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ color: "green", fontSize: 12, marginBottom: 6 }}>
-              AOI chargée ✓
-            </div>
-
-            <button type="button" onClick={clearAoi}>
-              Effacer la zone d’étude
-            </button>
+            <div style={{ color: "green", fontSize: 12, marginBottom: 6 }}>AOI chargée ✓</div>
+            <button type="button" onClick={clearAoi}>Effacer la zone d’étude</button>
           </div>
         )}
 
@@ -445,19 +393,14 @@ export default function App() {
         )}
 
         <h3 style={{ marginTop: 16 }}>Sélection</h3>
-
         <div>Total: {selectedTiles.length}</div>
         <div>LiDAR: {lidarCount}</div>
         <div>MNT: {mntCount}</div>
 
         <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button
-            onClick={handleExport}
-            disabled={!aoi || selectedTiles.length === 0}
-          >
+          <button onClick={handleExport} disabled={!aoi || selectedTiles.length === 0}>
             Exporter (ZIP)
           </button>
-
           <button onClick={clearSelection}>Vider la sélection</button>
         </div>
 
