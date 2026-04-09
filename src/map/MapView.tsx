@@ -937,8 +937,12 @@ export default function MapView(props: Props) {
     const lidarFiltered = showLidar ? filterTilesByYear(lidarRaw, yearFilterRef.current.lidar) : [];
     const mntFiltered = showMnt ? filterTilesByYear(mntRaw, yearFilterRef.current.mnt) : [];
 
-    setTilesOnMap(map, "lidar", lidarFiltered);
-    setTilesOnMap(map, "mnt", mntFiltered);
+    const aoi = aoiRef.current;
+    const lidarDisplayTiles = aoi && lidarFiltered.length ? intersectAoiWithTiles(aoi, lidarFiltered) : lidarFiltered;
+    const mntDisplayTiles = aoi && mntFiltered.length ? intersectAoiWithTiles(aoi, mntFiltered) : mntFiltered;
+
+    setTilesOnMap(map, "lidar", lidarDisplayTiles);
+    setTilesOnMap(map, "mnt", mntDisplayTiles);
     clearHover(map);
     syncPanelInfo();
 
