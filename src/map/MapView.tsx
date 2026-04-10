@@ -12,7 +12,11 @@ import type {
   TileProps,
 } from "../types";
 import { loadTilesForBBox } from "../index/loadChunks";
-import { intersectAoiWithTiles } from "../selection/intersect";
+import {
+  buildIntersectPayload,
+  intersectAoiWithTiles,
+  type WorkerCandidateTile,
+} from "../selection/intersect";
 import { extractAvailableYears, filterTilesByYear } from "../utils/filterTiles";
 import { normalizeTile } from "../utils/normalizeTile";
 
@@ -81,7 +85,7 @@ type RuntimeTileFeature = TileFeature & {
 type IntersectWorkerRequest = {
   requestId: string;
   aoi: AoiFeature;
-  tiles: RuntimeTileFeature[];
+  candidates: WorkerCandidateTile[];
 };
 
 type IntersectWorkerResponse = {
@@ -762,8 +766,15 @@ export default function MapView(props: Props) {
     const worker = getOrCreateWorker();
     if (!worker) {
       const selected = intersectAoiWithTiles(aoi, tiles);
-      return new Set(selected.map((tile) => String((tile as RuntimeTileFeature).id ?? "")).filter(Boolean));
+      return new Set(
+        selected
+          .map((tile: TileFeature) => String((tile as RuntimeTileFeature).id ?? ""))
+          .filter(Boolean)
+      );
     }
+
+    const { candidates } = buildIntersectPayload(aoi, tiles);
+    if (candidates.length === 0) return new Set<string>();
 
     return new Promise<Set<string>>((resolve, reject) => {
       const requestId = `intersect-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -789,7 +800,12 @@ export default function MapView(props: Props) {
       worker.addEventListener("message", handleMessage);
       worker.addEventListener("error", handleError);
 
-      const payload: IntersectWorkerRequest = { requestId, aoi, tiles };
+      const payload: IntersectWorkerRequest = {
+        requestId,
+        aoi,
+        candidates,
+      };
+
       worker.postMessage(payload);
     });
   }
@@ -831,8 +847,16 @@ export default function MapView(props: Props) {
         const selectedLidarFallback = aoi ? intersectAoiWithTiles(aoi, lidarTiles) : [];
         const selectedMntFallback = aoi ? intersectAoiWithTiles(aoi, mntTiles) : [];
 
-        const selectedLidarIds = new Set(selectedLidarFallback.map((tile) => String((tile as RuntimeTileFeature).id ?? "")).filter(Boolean));
-        const selectedMntIds = new Set(selectedMntFallback.map((tile) => String((tile as RuntimeTileFeature).id ?? "")).filter(Boolean));
+        const selectedLidarIds = new Set(
+          selectedLidarFallback
+            .map((tile: TileFeature) => String((tile as RuntimeTileFeature).id ?? ""))
+            .filter(Boolean)
+        );
+        const selectedMntIds = new Set(
+          selectedMntFallback
+            .map((tile: TileFeature) => String((tile as RuntimeTileFeature).id ?? ""))
+            .filter(Boolean)
+        );
 
         if (selectionRequestId !== selectionSeqRef.current) return;
 
@@ -1189,7 +1213,7 @@ export default function MapView(props: Props) {
           <div style={{ marginBottom: 8 }}><strong>Fournisseur :</strong> {panelInfo.provider ? String(panelInfo.provider) : "N/D"}</div>
 
           <div style={{ marginBottom: 10, wordBreak: "break-all", color: "#374151" }}>
-            <strong>URL :</strong> {" "}
+            <strong>URL :</strong>{" "}
             {panelInfo.url ? panelInfo.url : "URL non disponible"}
           </div>
 
