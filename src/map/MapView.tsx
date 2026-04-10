@@ -285,6 +285,14 @@ export default function MapView(props: Props) {
   const labelCacheRef = useRef<globalThis.Map<string, LabelFeature[]>>(new globalThis.Map());
   const sourceDataKeyRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
 
+  const aoiIntersectCacheRef = useRef<{
+    lidar: globalThis.Map<string, TileFeature[]>;
+    mnt: globalThis.Map<string, TileFeature[]>;
+  }>({
+    lidar: new globalThis.Map(),
+    mnt: new globalThis.Map(),
+  });
+
   const requestSeqRef = useRef(0);
   const selectionSeqRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
@@ -400,6 +408,56 @@ export default function MapView(props: Props) {
     const normalized = normalizeTile(tile);
     normalizeCacheRef.current.set(tile, normalized);
     return normalized;
+  }
+
+  function getTileArraySignature(tiles: TileFeature[]) {
+    if (tiles.length === 0) return "0";
+    const first = getNormalized(tiles[0]).id;
+    const last = getNormalized(tiles[tiles.length - 1]).id;
+    return `${tiles.length}:${first}:${last}`;
+  }
+
+  function buildAoiIntersectCacheKey(
+    dataset: Dataset,
+    bboxKey: string,
+    aoiKey: string,
+    tiles: TileFeature[]
+  ) {
+    return `${dataset}|${bboxKey}|${aoiKey}|${getTileArraySignature(tiles)}`;
+  }
+
+  function clearAoiIntersectCache(dataset?: Dataset) {
+    if (!dataset) {
+      aoiIntersectCacheRef.current.lidar.clear();
+      aoiIntersectCacheRef.current.mnt.clear();
+      return;
+    }
+    aoiIntersectCacheRef.current[dataset].clear();
+  }
+
+  function getAoiFilteredTiles(
+    dataset: Dataset,
+    bboxKey: string,
+    aoi: AoiFeature | null,
+    tiles: TileFeature[]
+  ): TileFeature[] {
+    if (!aoi || tiles.length === 0) return tiles;
+
+    const aoiKey = buildAoiKey(aoi);
+    const cacheKey = buildAoiIntersectCacheKey(dataset, bboxKey, aoiKey, tiles);
+    const cache = aoiIntersectCacheRef.current[dataset];
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
+    const result = intersectAoiWithTiles(aoi, tiles);
+    cache.set(cacheKey, result);
+
+    if (cache.size > 12) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey) cache.delete(oldestKey);
+    }
+
+    return result;
   }
 
   function setRuntimeTiles(dataset: Dataset, tiles: RuntimeTileFeature[]) {
@@ -769,6 +827,7 @@ export default function MapView(props: Props) {
     if (!showLidar && !showMnt) {
       rawLidarTilesRef.current = [];
       rawMntTilesRef.current = [];
+      clearAoiIntersectCache();
       setRuntimeTiles("lidar", []);
       setRuntimeTiles("mnt", []);
       setTileSourceData(map, SRC_LIDAR, []);
@@ -798,7 +857,8 @@ export default function MapView(props: Props) {
       bounds.getNorth(),
     ];
     const bboxKey = bbox.map((n) => n.toFixed(5)).join(",");
-    const aoiKey = buildAoiKey(aoiRef.current);
+    const aoi = aoiRef.current;
+    const aoiKey = buildAoiKey(aoi);
     const activeYear =
       activeDataset === "lidar"
         ? yearFilterRef.current.lidar
@@ -824,10 +884,12 @@ export default function MapView(props: Props) {
         lidarRaw = await loadTilesForBBox("lidar", bbox, cacheRef.current);
         if (requestId !== requestSeqRef.current) return;
         mntRaw = [];
+        clearAoiIntersectCache("lidar");
       } else if (showMnt) {
         mntRaw = await loadTilesForBBox("mnt", bbox, cacheRef.current);
         if (requestId !== requestSeqRef.current) return;
         lidarRaw = [];
+        clearAoiIntersectCache("mnt");
       }
 
       rawLidarTilesRef.current = lidarRaw;
@@ -835,13 +897,13 @@ export default function MapView(props: Props) {
       lastViewStateRef.current = { bboxKey, activeDataset };
     }
 
-    const aoi = aoiRef.current;
+    const lidarAoiTiles = showLidar
+      ? getAoiFilteredTiles("lidar", bboxKey, aoi, lidarRaw)
+      : [];
 
-    const lidarAoiTiles =
-      aoi && lidarRaw.length ? intersectAoiWithTiles(aoi, lidarRaw) : lidarRaw;
-
-    const mntAoiTiles =
-      aoi && mntRaw.length ? intersectAoiWithTiles(aoi, mntRaw) : mntRaw;
+    const mntAoiTiles = showMnt
+      ? getAoiFilteredTiles("mnt", bboxKey, aoi, mntRaw)
+      : [];
 
     onYearsChangeRef.current?.({
       lidar: extractAvailableYears(lidarAoiTiles),
@@ -1009,6 +1071,7 @@ export default function MapView(props: Props) {
     if (!map || !map.isStyleLoaded()) return;
     setAoiSourceData(map, aoiRef.current);
     lastRefreshKeyRef.current = "";
+    clearAoiIntersectCache();
 
     if (!props.aoi) {
       lastFittedAoiKeyRef.current = "";
@@ -1036,6 +1099,7 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
+    clearAoiIntersectCache();
     clearSelectionImmediately(map);
     scheduleRefresh(map, { delay: 0, reloadData: true, reason: "selected-product-change" });
   }, [props.selectedProduct]);
