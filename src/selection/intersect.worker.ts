@@ -1,16 +1,13 @@
 /// <reference lib="webworker" />
 
-import type { AoiFeature, TileFeature } from "../types";
-import { intersectAoiWithTiles } from "./intersect";
-
-type RuntimeTileFeature = TileFeature & {
-  id?: string | number;
-};
+import booleanIntersects from "@turf/boolean-intersects";
+import type { AoiFeature } from "../types";
+import type { WorkerCandidateTile } from "./intersect";
 
 type IntersectWorkerRequest = {
   requestId: string;
   aoi: AoiFeature;
-  tiles: RuntimeTileFeature[];
+  candidates: WorkerCandidateTile[];
 };
 
 type IntersectWorkerResponse = {
@@ -20,13 +17,26 @@ type IntersectWorkerResponse = {
 };
 
 self.onmessage = (event: MessageEvent<IntersectWorkerRequest>) => {
-  const { requestId, aoi, tiles } = event.data;
+  const { requestId, aoi, candidates } = event.data;
 
   try {
-    const selected = intersectAoiWithTiles(aoi, tiles);
-    const selectedIds = selected
-      .map((tile) => String((tile as RuntimeTileFeature).id ?? ""))
-      .filter(Boolean);
+    const selectedIds: string[] = [];
+
+    for (const candidate of candidates) {
+      try {
+        const tileFeature: GeoJSON.Feature = {
+          type: "Feature",
+          geometry: candidate.geometry,
+          properties: {},
+        };
+
+        if (booleanIntersects(aoi as any, tileFeature as any)) {
+          selectedIds.push(candidate.id);
+        }
+      } catch {
+        // on ignore la tuile fautive pour préserver la robustesse
+      }
+    }
 
     const response: IntersectWorkerResponse = {
       requestId,
