@@ -93,14 +93,6 @@ type RuntimeTileFeature = TileFeature & {
   };
 };
 
-type MapStatusTone = "info" | "warning" | "error";
-
-type MapStatus = {
-  tone: MapStatusTone;
-  title: string;
-  detail?: string;
-} | null;
-
 type BasemapOption = {
   id: string;
   label: string;
@@ -329,30 +321,6 @@ function getAoiBounds(aoi: AoiFeature | null): LngLatBoundsLike | null {
   ];
 }
 
-function getMapStatusStyle(tone: MapStatusTone): React.CSSProperties {
-  switch (tone) {
-    case "warning":
-      return {
-        border: "1px solid #fcd34d",
-        background: "rgba(255,251,235,0.97)",
-        color: "#92400e",
-      };
-    case "error":
-      return {
-        border: "1px solid #fca5a5",
-        background: "rgba(254,242,242,0.97)",
-        color: "#991b1b",
-      };
-    case "info":
-    default:
-      return {
-        border: "1px solid #bfdbfe",
-        background: "rgba(239,246,255,0.97)",
-        color: "#1d4ed8",
-      };
-  }
-}
-
 function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSProperties {
   if (kind === "product") {
     return {
@@ -501,7 +469,6 @@ export default function MapView(props: Props) {
    * - menu de fonds cartographiques
    */
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [mapStatus, setMapStatus] = useState<MapStatus>(null);
   const [isBasemapMenuOpen, setIsBasemapMenuOpen] = useState(false);
   const [selectedBasemapId, setSelectedBasemapId] = useState("osm");
 
@@ -1089,58 +1056,6 @@ export default function MapView(props: Props) {
   }
 
   /**
-   * Met à jour le message UX de carte en fonction du contexte courant.
-   */
-  function computeMapStatus(params: {
-    dataset: Dataset;
-    activeYear: string | "ALL";
-    showDataset: boolean;
-    hasAoi: boolean;
-    rawCount: number;
-    aoiCount: number;
-    displayCount: number;
-  }): MapStatus {
-    const { dataset, activeYear, showDataset, hasAoi, rawCount, aoiCount, displayCount } = params;
-
-    if (!showDataset) {
-      return {
-        tone: "info",
-        title: "Zoom insuffisant",
-        detail:
-          dataset === "lidar"
-            ? `Zoomez au moins jusqu’au niveau ${MIN_ZOOM_FOR_LIDAR_LOAD} pour charger les tuiles LiDAR.`
-            : `Zoomez au moins jusqu’au niveau ${MIN_ZOOM_FOR_MNT_LOAD} pour charger les tuiles MNT.`,
-      };
-    }
-
-    if (rawCount === 0) {
-      return {
-        tone: "info",
-        title: "Aucune tuile disponible",
-        detail: "Aucune donnée n’a été trouvée dans l’emprise courante.",
-      };
-    }
-
-    if (hasAoi && aoiCount === 0) {
-      return {
-        tone: "warning",
-        title: "AOI hors couverture",
-        detail: "Aucune tuile n’intersecte la zone d’étude pour le produit actif.",
-      };
-    }
-
-    if (displayCount === 0 && activeYear !== "ALL") {
-      return {
-        tone: "info",
-        title: "Aucun résultat pour ce millésime",
-        detail: `Aucune tuile ${dataset.toUpperCase()} n’est disponible pour l’année ${activeYear} dans le contexte courant.`,
-      };
-    }
-
-    return null;
-  }
-
-  /**
    * refreshTiles
    * ------------------
    * Pipeline principal de la carte :
@@ -1193,21 +1108,7 @@ export default function MapView(props: Props) {
         setPanelInfo(null);
         lastViewStateRef.current = { bboxKey: "", activeDataset: "" };
         lastRefreshKeyRef.current = "";
-
-        if (uiSeq === refreshUiSeqRef.current) {
-          setMapStatus(
-            computeMapStatus({
-              dataset: activeDataset,
-              activeYear: activeDataset === "lidar" ? yearFilterRef.current.lidar : yearFilterRef.current.mnt,
-              showDataset: false,
-              hasAoi: Boolean(aoiRef.current),
-              rawCount: 0,
-              aoiCount: 0,
-              displayCount: 0,
-            })
-          );
-        }
-
+       
         return;
       }
 
@@ -1303,36 +1204,11 @@ export default function MapView(props: Props) {
         setSelectedSourceData(map, SRC_MNT_SELECTED, []);
         onSelectionChangeRef.current([]);
       }
-
-      const activeRawCount = activeDataset === "lidar" ? lidarRaw.length : mntRaw.length;
-      const activeAoiCount = activeDataset === "lidar" ? lidarAoiTiles.length : mntAoiTiles.length;
-      const activeDisplayCount = activeDataset === "lidar" ? lidarDisplayTiles.length : mntDisplayTiles.length;
-
-      if (uiSeq === refreshUiSeqRef.current) {
-        setMapStatus(
-          computeMapStatus({
-            dataset: activeDataset,
-            activeYear,
-            showDataset: true,
-            hasAoi: Boolean(aoi),
-            rawCount: activeRawCount,
-            aoiCount: activeAoiCount,
-            displayCount: activeDisplayCount,
-          })
-        );
-      }
-
+           
       lastRefreshKeyRef.current = refreshKey;
     } catch (error) {
       console.error("Erreur dans refreshTiles :", error);
-
-      if (uiSeq === refreshUiSeqRef.current) {
-        setMapStatus({
-          tone: "error",
-          title: "Erreur de chargement cartographique",
-          detail: error instanceof Error ? error.message : "Une erreur inconnue est survenue.",
-        });
-      }
+    
     } finally {
       if (uiSeq === refreshUiSeqRef.current) {
         setIsRefreshing(false);
@@ -1509,12 +1385,11 @@ export default function MapView(props: Props) {
     clearAoiDerivedCaches();
 
     if (!props.aoi) {
-      lastFittedAoiKeyRef.current = "";
-      clearSelectionImmediately(map);
-      setMapStatus(null);
-      scheduleRefresh(map, { delay: 0, reloadData: false, reason: "aoi-cleared" });
-      return;
-    }
+	lastFittedAoiKeyRef.current = "";
+	clearSelectionImmediately(map);
+	scheduleRefresh(map, { delay: 0, reloadData: false, reason: "aoi-cleared" });
+	return;
+	}
 
     const aoiKey = buildAoiKey(props.aoi);
     const hasMovedToNewAoi = lastFittedAoiKeyRef.current !== aoiKey;
@@ -1540,10 +1415,9 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
-    clearAoiDerivedCaches();
-    clearSelectionImmediately(map);
-    setMapStatus(null);
-    scheduleRefresh(map, { delay: 0, reloadData: true, reason: "selected-product-change" });
+	clearAoiDerivedCaches();
+	clearSelectionImmediately(map);
+	scheduleRefresh(map, { delay: 0, reloadData: true, reason: "selected-product-change" });
   }, [props.selectedProduct]);
 
   /**
@@ -1554,8 +1428,7 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
-    setMapStatus(null);
-    scheduleRefresh(map, { delay: 0, reloadData: false, reason: "year-filter-change" });
+	scheduleRefresh(map, { delay: 0, reloadData: false, reason: "year-filter-change" });
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
   return (
@@ -1773,31 +1646,7 @@ export default function MapView(props: Props) {
           Actualisation de la carte…
         </div>
       )}
-
-      {/* Message contextuel : aucun résultat, AOI hors couverture, erreur, etc. */}
-      {mapStatus && !isRefreshing && (
-        <div
-          style={{
-            position: "absolute",
-            top: 54,
-            left: 12,
-            zIndex: 29,
-            maxWidth: 420,
-            borderRadius: 12,
-            boxShadow: "0 10px 24px rgba(0,0,0,0.10)",
-            padding: "10px 12px",
-            fontSize: 13,
-            lineHeight: 1.45,
-            ...getMapStatusStyle(mapStatus.tone),
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: mapStatus.detail ? 4 : 0 }}>
-            {mapStatus.title}
-          </div>
-          {mapStatus.detail && <div>{mapStatus.detail}</div>}
-        </div>
-      )}
-
+      
       {/* Indication utilisateur : zoom insuffisant pour le dataset actif */}
       {(showLidarZoomHint || showMntZoomHint) && (
         <div
