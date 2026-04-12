@@ -105,9 +105,14 @@ type BasemapOption = {
   id: string;
   label: string;
   subtitle: string;
-  tiles: string[];
-  tileSize: number;
+  sourceType: "xyz" | "wms";
+  tiles?: string[];
+  tileSize?: number;
   attribution: string;
+  wmsBaseUrl?: string;
+  wmsLayers?: string;
+  wmsFormat?: string;
+  minRecommendedZoom: number;
 };
 
 /**
@@ -392,6 +397,30 @@ function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSPropertie
   };
 }
 
+/**
+ * Builder WMS raster compatible MapLibre.
+ */
+function buildWmsTileUrl(option: BasemapOption): string {
+  const base = option.wmsBaseUrl ?? "";
+  const layers = option.wmsLayers ?? "";
+  const format = option.wmsFormat ?? "image/png";
+
+  return (
+    `${base}` +
+    `?SERVICE=WMS` +
+    `&VERSION=1.1.1` +
+    `&REQUEST=GetMap` +
+    `&LAYERS=${encodeURIComponent(layers)}` +
+    `&STYLES=` +
+    `&FORMAT=${encodeURIComponent(format)}` +
+    `&TRANSPARENT=FALSE` +
+    `&SRS=EPSG:3857` +
+    `&WIDTH=256` +
+    `&HEIGHT=256` +
+    `&BBOX={bbox-epsg-3857}`
+  );
+}
+
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -499,7 +528,7 @@ export default function MapView(props: Props) {
    */
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [mapStatus, setMapStatus] = useState<MapStatus>(null);
-  const [isBasemapMenuOpen, setIsBasemapMenuOpen] = useState(true);
+  const [isBasemapMenuOpen, setIsBasemapMenuOpen] = useState(false);
   const [selectedBasemapId, setSelectedBasemapId] = useState("osm");
 
   useEffect(() => {
@@ -529,7 +558,10 @@ export default function MapView(props: Props) {
   /**
    * Catalogue des fonds de carte :
    * - OSM
-   * - 3 services web cartographiques officiels du Québec
+   * - 3 services Web officiels du gouvernement du Québec
+   *
+   * Les couches gouvernementales sont appelées en WMS raster,
+   * plus robuste dans MapLibre pour cette intégration.
    */
   const basemapOptions = useMemo<BasemapOption[]>(() => {
     const customOsm = props.basemaps?.basemaps?.[0];
@@ -539,39 +571,44 @@ export default function MapView(props: Props) {
         id: "osm",
         label: "OpenStreetMap",
         subtitle: "Fond général",
+        sourceType: "xyz",
         tiles: customOsm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
         tileSize: customOsm?.tileSize ?? 256,
         attribution: customOsm?.attribution ?? "© OpenStreetMap contributors",
+        minRecommendedZoom: 0,
       },
       {
         id: "qc-bdtq-20k",
         label: "Québec Topo 1:20 000",
         subtitle: "Gouvernement du Québec",
-        tiles: [
-          "https://geoegl.msp.gouv.qc.ca/carto/wmts/1.0.0/carte_gouv_qc_public/default/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png",
-        ],
-        tileSize: 256,
+        sourceType: "wms",
+        wmsBaseUrl: "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wms/Cartes_Images",
+        wmsLayers: "BDTQ-20k",
+        wmsFormat: "image/png",
         attribution: "© Gouvernement du Québec",
+        minRecommendedZoom: 12,
       },
       {
         id: "qc-bdat-100k",
         label: "Québec Topo 1:100 000",
         subtitle: "Gouvernement du Québec",
-        tiles: [
-          "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wmts/Cartes_Images?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=BDAT-100k&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
-        ],
-        tileSize: 256,
+        sourceType: "wms",
+        wmsBaseUrl: "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wms/Cartes_Images",
+        wmsLayers: "BDAT-100k",
+        wmsFormat: "image/png",
         attribution: "© Gouvernement du Québec",
+        minRecommendedZoom: 8,
       },
       {
         id: "qc-bdga-1m",
         label: "Québec BDGA 1:1 000 000",
         subtitle: "Gouvernement du Québec",
-        tiles: [
-          "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wmts/Cartes_Images?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=BDGA-1M_Carte_Generale_Couleur&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
-        ],
-        tileSize: 256,
+        sourceType: "wms",
+        wmsBaseUrl: "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wms/Cartes_Images",
+        wmsLayers: "BDGA-1M_Carte_Generale_Couleur_Estompage",
+        wmsFormat: "image/png",
         attribution: "© Gouvernement du Québec",
+        minRecommendedZoom: 0,
       },
     ];
   }, [props.basemaps]);
@@ -580,14 +617,23 @@ export default function MapView(props: Props) {
     return basemapOptions.find((item) => item.id === selectedBasemapId) ?? basemapOptions[0];
   }, [basemapOptions, selectedBasemapId]);
 
+  const isBasemapScaleTooSmall = mapZoom < currentBasemap.minRecommendedZoom;
+
   const styleSpec = useMemo<maplibregl.StyleSpecification>(() => {
+    const tiles =
+      currentBasemap.sourceType === "xyz"
+        ? currentBasemap.tiles ?? []
+        : [buildWmsTileUrl(currentBasemap)];
+
+    const tileSize = currentBasemap.tileSize ?? 256;
+
     return {
       version: 8,
       sources: {
         basemap: {
           type: "raster",
-          tiles: currentBasemap.tiles,
-          tileSize: currentBasemap.tileSize,
+          tiles,
+          tileSize,
           attribution: currentBasemap.attribution,
         },
       },
@@ -1555,15 +1601,14 @@ export default function MapView(props: Props) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} className="map" style={{ position: "absolute", inset: 0 }} />
 
-      {/* Menu rétractable des fonds cartographiques */}
+      {/* Sélecteur rétractable des fonds cartographiques */}
       <div
         style={{
           position: "absolute",
           top: 12,
-          left: 12,
+          right: 58,
           zIndex: 32,
-          width: isBasemapMenuOpen ? 320 : "auto",
-          maxWidth: "calc(100% - 24px)",
+          width: isBasemapMenuOpen ? 320 : 40,
           borderRadius: 14,
           border: "1px solid #d1d5db",
           background: "rgba(255,255,255,0.97)",
@@ -1574,40 +1619,83 @@ export default function MapView(props: Props) {
         <div
           style={{
             display: "flex",
+            justifyContent: isBasemapMenuOpen ? "space-between" : "center",
             alignItems: "center",
-            justifyContent: "space-between",
-            gap: 10,
-            padding: "10px 12px",
+            padding: isBasemapMenuOpen ? "10px 12px" : "6px",
             borderBottom: isBasemapMenuOpen ? "1px solid #e5e7eb" : "none",
           }}
         >
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, color: "#111827" }}>
-              Fonds cartographiques
-            </div>
-            {isBasemapMenuOpen && (
-              <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
-                OSM + services Web du gouvernement du Québec
+          {isBasemapMenuOpen && (
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 13, color: "#111827" }}>
+                Fonds cartographiques
               </div>
-            )}
-          </div>
+              <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
+                OSM + services du gouvernement du Québec
+              </div>
+            </div>
+          )}
 
           <button
             type="button"
             onClick={() => setIsBasemapMenuOpen((prev) => !prev)}
             style={{
-              border: "1px solid #d1d5db",
-              background: "#ffffff",
-              borderRadius: 10,
-              padding: "6px 10px",
+              width: 28,
+              height: 28,
+              border: "none",
+              background: "#0f8f88",
+              borderRadius: 8,
               cursor: "pointer",
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#111827",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
             }}
-            title={isBasemapMenuOpen ? "Réduire" : "Déployer"}
+            title={isBasemapMenuOpen ? "Fermer le sélecteur de fonds" : "Ouvrir le sélecteur de fonds"}
+            aria-label={isBasemapMenuOpen ? "Fermer le sélecteur de fonds" : "Ouvrir le sélecteur de fonds"}
           >
-            {isBasemapMenuOpen ? "Réduire" : "Fonds"}
+            <span
+              style={{
+                position: "relative",
+                width: 14,
+                height: 10,
+                display: "inline-block",
+              }}
+            >
+              <span
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: 14,
+                  height: 2,
+                  background: "#ffffff",
+                  borderRadius: 2,
+                }}
+              />
+              <span
+                style={{
+                  position: "absolute",
+                  top: 4,
+                  left: 0,
+                  width: 14,
+                  height: 2,
+                  background: "#ffffff",
+                  borderRadius: 2,
+                }}
+              />
+              <span
+                style={{
+                  position: "absolute",
+                  top: 8,
+                  left: 0,
+                  width: 14,
+                  height: 2,
+                  background: "#ffffff",
+                  borderRadius: 2,
+                }}
+              />
+            </span>
           </button>
         </div>
 
@@ -1631,30 +1719,60 @@ export default function MapView(props: Props) {
               </div>
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
+            {isBasemapScaleTooSmall && currentBasemap.id !== "osm" && (
+              <div
+                style={{
+                  marginBottom: 10,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #fcd34d",
+                  background: "#fffbeb",
+                  color: "#92400e",
+                  fontSize: 12,
+                  lineHeight: 1.45,
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Échelle non recommandée</div>
+                <div>
+                  Ce fond est mieux adapté à partir du zoom <strong>{currentBasemap.minRecommendedZoom}</strong>.
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "grid", gap: 10 }}>
               {basemapOptions.map((option) => {
                 const isActive = option.id === currentBasemap.id;
 
                 return (
-                  <button
+                  <label
                     key={option.id}
-                    type="button"
-                    onClick={() => setSelectedBasemapId(option.id)}
                     style={{
-                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
                       padding: "10px 12px",
                       borderRadius: 12,
                       border: isActive ? "1px solid #2563eb" : "1px solid #e5e7eb",
                       background: isActive ? "#eff6ff" : "#ffffff",
-                      color: "#111827",
                       cursor: "pointer",
                     }}
                   >
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{option.label}</div>
-                    <div style={{ marginTop: 2, fontSize: 12, color: "#6b7280" }}>
-                      {option.subtitle}
-                    </div>
-                  </button>
+                    <input
+                      type="radio"
+                      name="basemap-selector"
+                      checked={isActive}
+                      onChange={() => setSelectedBasemapId(option.id)}
+                      style={{ marginTop: 2 }}
+                    />
+                    <span>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>
+                        {option.label}
+                      </div>
+                      <div style={{ marginTop: 2, fontSize: 12, color: "#6b7280" }}>
+                        {option.subtitle}
+                      </div>
+                    </span>
+                  </label>
                 );
               })}
             </div>
@@ -1667,7 +1785,7 @@ export default function MapView(props: Props) {
         <div
           style={{
             position: "absolute",
-            top: isBasemapMenuOpen ? 240 : 64,
+            top: 12,
             left: 12,
             zIndex: 30,
             display: "inline-flex",
@@ -1700,7 +1818,7 @@ export default function MapView(props: Props) {
         <div
           style={{
             position: "absolute",
-            top: isBasemapMenuOpen ? 240 : 64,
+            top: 54,
             left: 12,
             zIndex: 29,
             maxWidth: 420,
