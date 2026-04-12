@@ -105,13 +105,11 @@ type BasemapOption = {
   id: string;
   label: string;
   subtitle: string;
-  sourceType: "xyz" | "wms";
+  sourceType: "xyz" | "tms";
   tiles?: string[];
   tileSize?: number;
   attribution: string;
-  wmsBaseUrl?: string;
-  wmsLayers?: string;
-  wmsFormat?: string;
+  tmsUrl?: string;
   minRecommendedZoom: number;
 };
 
@@ -397,30 +395,6 @@ function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSPropertie
   };
 }
 
-/**
- * Builder WMS raster compatible MapLibre.
- */
-function buildWmsTileUrl(option: BasemapOption): string {
-  const base = option.wmsBaseUrl ?? "";
-  const layers = option.wmsLayers ?? "";
-  const format = option.wmsFormat ?? "image/png";
-
-  return (
-    `${base}` +
-    `?SERVICE=WMS` +
-    `&VERSION=1.1.1` +
-    `&REQUEST=GetMap` +
-    `&LAYERS=${encodeURIComponent(layers)}` +
-    `&STYLES=` +
-    `&FORMAT=${encodeURIComponent(format)}` +
-    `&TRANSPARENT=FALSE` +
-    `&SRS=EPSG:3857` +
-    `&WIDTH=256` +
-    `&HEIGHT=256` +
-    `&BBOX={bbox-epsg-3857}`
-  );
-}
-
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -558,10 +532,8 @@ export default function MapView(props: Props) {
   /**
    * Catalogue des fonds de carte :
    * - OSM
-   * - 3 services Web officiels du gouvernement du Québec
-   *
-   * Les couches gouvernementales sont appelées en WMS raster,
-   * plus robuste dans MapLibre pour cette intégration.
+   * - Carte de base publique du gouvernement du Québec
+   * - Imagerie du gouvernement du Québec
    */
   const basemapOptions = useMemo<BasemapOption[]>(() => {
     const customOsm = props.basemaps?.basemaps?.[0];
@@ -578,37 +550,26 @@ export default function MapView(props: Props) {
         minRecommendedZoom: 0,
       },
       {
-        id: "qc-bdtq-20k",
-        label: "Québec Topo 1:20 000",
+        id: "qc-carte-base",
+        label: "Carte de base du Québec",
         subtitle: "Gouvernement du Québec",
-        sourceType: "wms",
-        wmsBaseUrl: "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wms/Cartes_Images",
-        wmsLayers: "BDTQ-20k",
-        wmsFormat: "image/png",
-        attribution: "© Gouvernement du Québec",
-        minRecommendedZoom: 12,
-      },
-      {
-        id: "qc-bdat-100k",
-        label: "Québec Topo 1:100 000",
-        subtitle: "Gouvernement du Québec",
-        sourceType: "wms",
-        wmsBaseUrl: "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wms/Cartes_Images",
-        wmsLayers: "BDAT-100k",
-        wmsFormat: "image/png",
-        attribution: "© Gouvernement du Québec",
-        minRecommendedZoom: 8,
-      },
-      {
-        id: "qc-bdga-1m",
-        label: "Québec BDGA 1:1 000 000",
-        subtitle: "Gouvernement du Québec",
-        sourceType: "wms",
-        wmsBaseUrl: "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wms/Cartes_Images",
-        wmsLayers: "BDGA-1M_Carte_Generale_Couleur_Estompage",
-        wmsFormat: "image/png",
+        sourceType: "tms",
+        tmsUrl:
+          "https://geoegl.msp.gouv.qc.ca/carto/tms/1.0.0/carte_gouv_qc_public@EPSG_3857/{z}/{x}/{-y}.png",
+        tileSize: 256,
         attribution: "© Gouvernement du Québec",
         minRecommendedZoom: 0,
+      },
+      {
+        id: "qc-imagerie",
+        label: "Imagerie du Québec",
+        subtitle: "Gouvernement du Québec",
+        sourceType: "tms",
+        tmsUrl:
+          "https://geoegl.msp.gouv.qc.ca/carto/tms/1.0.0/orthos@EPSG_3857/{z}/{x}/{-y}.png",
+        tileSize: 256,
+        attribution: "© Gouvernement du Québec",
+        minRecommendedZoom: 8,
       },
     ];
   }, [props.basemaps]);
@@ -623,7 +584,7 @@ export default function MapView(props: Props) {
     const tiles =
       currentBasemap.sourceType === "xyz"
         ? currentBasemap.tiles ?? []
-        : [buildWmsTileUrl(currentBasemap)];
+        : [currentBasemap.tmsUrl ?? ""];
 
     const tileSize = currentBasemap.tileSize ?? 256;
 
