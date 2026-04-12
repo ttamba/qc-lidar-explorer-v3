@@ -503,43 +503,32 @@ export default function MapView(props: Props) {
    * - Imagerie du gouvernement du Québec
    */
   const basemapOptions = useMemo<BasemapOption[]>(() => {
-    const customOsm = props.basemaps?.basemaps?.[0];
+  const customOsm = props.basemaps?.basemaps?.[0];
 
-    return [
-      {
-        id: "osm",
-        label: "OpenStreetMap",
-        subtitle: "Fond général",
-        sourceType: "xyz",
-        tiles: customOsm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-        tileSize: customOsm?.tileSize ?? 256,
-        attribution: customOsm?.attribution ?? "© OpenStreetMap contributors",
-        minRecommendedZoom: 0,
-      },
-      {
-        id: "qc-carte-base",
-        label: "Carte de base du Québec",
-        subtitle: "Gouvernement du Québec",
-        sourceType: "tms",
-        tmsUrl:
-          "https://geoegl.msp.gouv.qc.ca/carto/tms/1.0.0/carte_gouv_qc_public@EPSG_3857/{z}/{x}/{-y}.png",
-        tileSize: 256,
-        attribution: "© Gouvernement du Québec",
-        minRecommendedZoom: 0,
-      },
-      {
-        id: "qc-imagerie",
-        label: "Imagerie du Québec",
-        subtitle: "Gouvernement du Québec",
-        sourceType: "tms",
-        tmsUrl:
-          "https://geoegl.msp.gouv.qc.ca/carto/tms/1.0.0/orthos@EPSG_3857/{z}/{x}/{-y}.png",
-        tileSize: 256,
-        attribution: "© Gouvernement du Québec",
-        minRecommendedZoom: 8,
-      },
-    ];
-  }, [props.basemaps]);
+  return [
+    {
+      id: "osm",
+      label: "OpenStreetMap",
+      subtitle: "Fond général",
+      sourceType: "xyz",
+      tiles: customOsm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: customOsm?.tileSize ?? 256,
+      attribution: customOsm?.attribution ?? "© OpenStreetMap contributors",
+      minRecommendedZoom: 0,
+    },
+    {
+      id: "qc-carte-base",
+      label: "Carte de base du Québec",
+      subtitle: "Gouvernement du Québec",
+      sourceType: "tms",
+      tmsUrl:
+        "https://geoegl.msp.gouv.qc.ca/carto/tms/1.0.0/carte_gouv_qc_public@EPSG_3857/{z}/{x}/{-y}.png",
+      tileSize: 256,
+      attribution: "© Gouvernement du Québec",
+      minRecommendedZoom: 0,
+    },
+  ];
+}, [props.basemaps]);
 
   const currentBasemap = useMemo(() => {
     return basemapOptions.find((item) => item.id === selectedBasemapId) ?? basemapOptions[0];
