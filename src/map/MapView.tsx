@@ -16,6 +16,21 @@ import { intersectAoiWithTiles } from "../selection/intersect";
 import { extractAvailableYears, filterTilesByYear } from "../utils/filterTiles";
 import { normalizeTile } from "../utils/normalizeTile";
 
+/**
+ * MapView
+ * ----------
+ * Composant principal de rendu cartographique basé sur MapLibre.
+ *
+ * Responsabilités :
+ * - chargement dynamique des tuiles par emprise
+ * - intersection AOI ↔ tuiles
+ * - application des filtres produit / année
+ * - mise à jour des sources et layers GeoJSON
+ * - gestion de la sélection, du hover et du panneau d’information
+ * - cache des résultats coûteux pour améliorer la fluidité
+ * - gestion des fonds cartographiques et des contrôles de carte
+ */
+
 type Dataset = "lidar" | "mnt";
 
 type Props = {
@@ -78,6 +93,27 @@ type RuntimeTileFeature = TileFeature & {
   };
 };
 
+type MapStatusTone = "info" | "warning" | "error";
+
+type MapStatus = {
+  tone: MapStatusTone;
+  title: string;
+  detail?: string;
+} | null;
+
+type BasemapOption = {
+  id: string;
+  label: string;
+  subtitle: string;
+  tiles: string[];
+  tileSize: number;
+  attribution: string;
+};
+
+/**
+ * Identifiants des sources GeoJSON MapLibre
+ * (séparés par dataset + usage : brut, sélection, labels, hover, AOI)
+ */
 const SRC_LIDAR = "lidar-src";
 const SRC_MNT = "mnt-src";
 const SRC_LIDAR_LABELS = "lidar-labels-src";
@@ -133,6 +169,10 @@ const QUEBEC_BOUNDS: LngLatBoundsLike = [
   [-57.0, 62.2],
 ];
 
+/**
+ * Throttle basé sur requestAnimationFrame
+ * → évite les recalculs trop fréquents sur mousemove
+ */
 function rafThrottle<T extends (...args: any[]) => void>(fn: T): T {
   let scheduled = false;
   let lastArgs: any[] = [];
@@ -148,6 +188,10 @@ function rafThrottle<T extends (...args: any[]) => void>(fn: T): T {
   }) as T;
 }
 
+/**
+ * Outils de profiling activés uniquement en DEV
+ * → permet d’analyser les performances de refreshTiles
+ */
 function perfMark(name: string) {
   if (!import.meta.env.DEV) return;
   performance.mark(name);
@@ -221,6 +265,13 @@ function areSetsEqual(a: Set<string>, b: Set<string>) {
   return true;
 }
 
+/**
+ * Extraction rapide de bbox à partir d’une géométrie GeoJSON
+ * → utilisé pour :
+ *   - calcul centre
+ *   - fit AOI
+ *   - optimisations diverses
+ */
 function getGeometryBounds(geometry: Geometry): [number, number, number, number] | null {
   if (!geometry || !(geometry as any).coordinates) return null;
 
@@ -275,16 +326,95 @@ function getAoiBounds(aoi: AoiFeature | null): LngLatBoundsLike | null {
   ];
 }
 
+function getMapStatusStyle(tone: MapStatusTone): React.CSSProperties {
+  switch (tone) {
+    case "warning":
+      return {
+        border: "1px solid #fcd34d",
+        background: "rgba(255,251,235,0.97)",
+        color: "#92400e",
+      };
+    case "error":
+      return {
+        border: "1px solid #fca5a5",
+        background: "rgba(254,242,242,0.97)",
+        color: "#991b1b",
+      };
+    case "info":
+    default:
+      return {
+        border: "1px solid #bfdbfe",
+        background: "rgba(239,246,255,0.97)",
+        color: "#1d4ed8",
+      };
+  }
+}
+
+function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSProperties {
+  if (kind === "product") {
+    return {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "4px 8px",
+      borderRadius: 999,
+      background: "#eff6ff",
+      color: "#1d4ed8",
+      border: "1px solid #bfdbfe",
+      fontSize: 11,
+      fontWeight: 700,
+    };
+  }
+
+  if (kind === "year") {
+    return {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "4px 8px",
+      borderRadius: 999,
+      background: "#f3f4f6",
+      color: "#374151",
+      border: "1px solid #e5e7eb",
+      fontSize: 11,
+      fontWeight: 700,
+    };
+  }
+
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 8px",
+    borderRadius: 999,
+    background: "#f9fafb",
+    color: "#374151",
+    border: "1px solid #e5e7eb",
+    fontSize: 11,
+    fontWeight: 600,
+  };
+}
+
 export default function MapView(props: Props) {
   const mapRef = useRef<Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  /**
+   * Refs centrales du moteur MapView
+   * --------------------------------
+   * On évite React state ici pour performance :
+   * - cache données (tiles, labels, centres)
+   * - lookup rapides (id → feature)
+   * - gestion sélection
+   * - synchronisation avec MapLibre
+   */
   const cacheRef = useRef<globalThis.Map<string, TileFeature[]>>(new globalThis.Map());
   const normalizeCacheRef = useRef(new WeakMap<TileFeature, ReturnType<typeof normalizeTile>>());
   const centerCacheRef = useRef<globalThis.Map<string, [number, number] | null>>(new globalThis.Map());
   const labelCacheRef = useRef<globalThis.Map<string, LabelFeature[]>>(new globalThis.Map());
   const sourceDataKeyRef = useRef<globalThis.Map<string, string>>(new globalThis.Map());
 
+  /**
+   * Cache des résultats d’intersection AOI
+   * clé = dataset + bbox + aoi + signature tiles
+   */
   const aoiIntersectCacheRef = useRef<{
     lidar: globalThis.Map<string, TileFeature[]>;
     mnt: globalThis.Map<string, TileFeature[]>;
@@ -293,6 +423,10 @@ export default function MapView(props: Props) {
     mnt: new globalThis.Map(),
   });
 
+  /**
+   * Cache des années disponibles dérivées de l’AOI
+   * → évite recalcul inutile sur chaque refresh
+   */
   const availableYearsCacheRef = useRef<{
     lidar: globalThis.Map<string, string[]>;
     mnt: globalThis.Map<string, string[]>;
@@ -310,6 +444,8 @@ export default function MapView(props: Props) {
   const lastRefreshKeyRef = useRef<string>("");
   const lastAppliedStyleKeyRef = useRef<string>("");
   const pendingRefreshOptionsRef = useRef<{ reloadData: boolean; reason: string } | null>(null);
+  const refreshUiSeqRef = useRef(0);
+  const scaleControlAddedRef = useRef(false);
 
   const selectedProductRef = useRef(props.selectedProduct);
   const aoiRef = useRef(props.aoi);
@@ -355,6 +491,17 @@ export default function MapView(props: Props) {
   const panelInfoRef = useRef<PanelInfo | null>(null);
   const [mapZoom, setMapZoom] = useState<number>(8);
 
+  /**
+   * États UX carte :
+   * - chargement discret
+   * - message contextuel sur la carte
+   * - menu de fonds cartographiques
+   */
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mapStatus, setMapStatus] = useState<MapStatus>(null);
+  const [isBasemapMenuOpen, setIsBasemapMenuOpen] = useState(true);
+  const [selectedBasemapId, setSelectedBasemapId] = useState("osm");
+
   useEffect(() => {
     selectedProductRef.current = props.selectedProduct;
   }, [props.selectedProduct]);
@@ -379,33 +526,85 @@ export default function MapView(props: Props) {
     panelInfoRef.current = panelInfo;
   }, [panelInfo]);
 
-  const styleSpec = useMemo<maplibregl.StyleSpecification>(() => {
-    const osm = props.basemaps?.basemaps?.[0];
-    const tiles = osm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"];
-    const tileSize = osm?.tileSize ?? 256;
-    const attribution = osm?.attribution ?? "© OpenStreetMap contributors";
+  /**
+   * Catalogue des fonds de carte :
+   * - OSM
+   * - 3 services web cartographiques officiels du Québec
+   */
+  const basemapOptions = useMemo<BasemapOption[]>(() => {
+    const customOsm = props.basemaps?.basemaps?.[0];
 
+    return [
+      {
+        id: "osm",
+        label: "OpenStreetMap",
+        subtitle: "Fond général",
+        tiles: customOsm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: customOsm?.tileSize ?? 256,
+        attribution: customOsm?.attribution ?? "© OpenStreetMap contributors",
+      },
+      {
+        id: "qc-bdtq-20k",
+        label: "Québec Topo 1:20 000",
+        subtitle: "Gouvernement du Québec",
+        tiles: [
+          "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wmts/Cartes_Images?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=BDTQ-20k&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
+        ],
+        tileSize: 256,
+        attribution: "© Gouvernement du Québec",
+      },
+      {
+        id: "qc-bdat-100k",
+        label: "Québec Topo 1:100 000",
+        subtitle: "Gouvernement du Québec",
+        tiles: [
+          "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wmts/Cartes_Images?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=BDAT-100k&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
+        ],
+        tileSize: 256,
+        attribution: "© Gouvernement du Québec",
+      },
+      {
+        id: "qc-bdga-1m",
+        label: "Québec BDGA 1:1 000 000",
+        subtitle: "Gouvernement du Québec",
+        tiles: [
+          "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wmts/Cartes_Images?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=BDGA-1M_Carte_Generale_Couleur&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
+        ],
+        tileSize: 256,
+        attribution: "© Gouvernement du Québec",
+      },
+    ];
+  }, [props.basemaps]);
+
+  const currentBasemap = useMemo(() => {
+    return basemapOptions.find((item) => item.id === selectedBasemapId) ?? basemapOptions[0];
+  }, [basemapOptions, selectedBasemapId]);
+
+  const styleSpec = useMemo<maplibregl.StyleSpecification>(() => {
     return {
       version: 8,
       sources: {
-        osm: {
+        basemap: {
           type: "raster",
-          tiles,
-          tileSize,
-          attribution,
+          tiles: currentBasemap.tiles,
+          tileSize: currentBasemap.tileSize,
+          attribution: currentBasemap.attribution,
         },
       },
       layers: [
         {
-          id: "osm",
+          id: "basemap",
           type: "raster",
-          source: "osm",
+          source: "basemap",
         },
       ],
     };
-  }, [props.basemaps]);
+  }, [currentBasemap]);
 
-  const styleSpecKey = useMemo(() => JSON.stringify(styleSpec), [styleSpec]);
+  const styleSpecKey = useMemo(
+    () => JSON.stringify({ basemapId: currentBasemap.id, styleSpec }),
+    [currentBasemap.id, styleSpec]
+  );
 
   const showLidarZoomHint = props.selectedProduct === "lidar" && mapZoom < MIN_ZOOM_FOR_LIDAR_LOAD;
   const showMntZoomHint = props.selectedProduct === "mnt" && mapZoom < MIN_ZOOM_FOR_MNT_LOAD;
@@ -447,6 +646,10 @@ export default function MapView(props: Props) {
     availableYearsCacheRef.current[dataset].clear();
   }
 
+  /**
+   * Applique intersection AOI ↔ tuiles avec cache
+   * → point critique performance
+   */
   function getAoiFilteredTiles(
     dataset: Dataset,
     bboxKey: string,
@@ -472,6 +675,10 @@ export default function MapView(props: Props) {
     return result;
   }
 
+  /**
+   * Calcule les années disponibles à partir des tuiles AOI
+   * avec mémoïsation
+   */
   function getAvailableYearsForAoiTiles(
     dataset: Dataset,
     bboxKey: string,
@@ -497,6 +704,10 @@ export default function MapView(props: Props) {
     return years;
   }
 
+  /**
+   * Met à jour les tableaux runtime et les lookup rapides
+   * utilisés par les interactions carte.
+   */
   function setRuntimeTiles(dataset: Dataset, tiles: RuntimeTileFeature[]) {
     if (dataset === "lidar") {
       displayedLidarTilesRef.current = tiles;
@@ -531,6 +742,10 @@ export default function MapView(props: Props) {
     setSourceDataIfChanged(map, sourceId, key, fc);
   }
 
+  /**
+   * Initialise toutes les sources et layers MapLibre
+   * (idempotent)
+   */
   function ensureCustomSourcesAndLayers(map: Map) {
     if (!map.getSource(SRC_LIDAR)) map.addSource(SRC_LIDAR, { type: "geojson", data: EMPTY_TILE_FC as any });
     if (!map.getSource(SRC_MNT)) map.addSource(SRC_MNT, { type: "geojson", data: EMPTY_TILE_FC as any });
@@ -581,6 +796,11 @@ export default function MapView(props: Props) {
     return center;
   }
 
+  /**
+   * Normalise les tuiles :
+   * - ajoute id runtime stable
+   * - enrichit properties (product, url, name, year, provider)
+   */
   function toRuntimeTiles(rawTiles: TileFeature[], dataset: Dataset): RuntimeTileFeature[] {
     return rawTiles.map((tile) => {
       const normalized = getNormalized(tile);
@@ -707,6 +927,12 @@ export default function MapView(props: Props) {
     clearHover(map);
   }
 
+  /**
+   * Applique la sélection via feature-state MapLibre
+   * optimisation :
+   * - diff entre ancienne et nouvelle sélection
+   * - évite re-render inutile
+   */
   function applySelectionState(map: Map, dataset: Dataset, nextSelected: Set<string>, forceReapply = false) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
     const previous = selectedKeysRef.current[dataset];
@@ -735,6 +961,10 @@ export default function MapView(props: Props) {
     selectedKeysRef.current[dataset] = new Set(nextSelected);
   }
 
+  /**
+   * Sélection automatique :
+   * toutes les tuiles affichées sont sélectionnées si AOI active
+   */
   function applySelectionFromDisplayedTiles(
     map: Map,
     lidarTiles: RuntimeTileFeature[],
@@ -755,6 +985,12 @@ export default function MapView(props: Props) {
     return lookupByNormalizedIdRef.current[dataset].get(normalizedId) ?? null;
   }
 
+  /**
+   * Résolution feature MapLibre → tuile runtime
+   * support :
+   * - id runtime
+   * - normalized_id
+   */
   function getTileFromRenderedFeature(feature: unknown): RuntimeTileFeature | null {
     const rendered = feature as { properties?: Record<string, unknown>; id?: string | number };
     if (typeof rendered?.id === "string") {
@@ -845,147 +1081,266 @@ export default function MapView(props: Props) {
     });
   }
 
-  async function refreshTiles(map: Map, options?: { reloadData?: boolean }) {
-    perfMark("refreshTiles:start");
-    if (!map.isStyleLoaded()) return;
-    ensureCustomSourcesAndLayers(map);
+  /**
+   * Met à jour le message UX de carte en fonction du contexte courant.
+   */
+  function computeMapStatus(params: {
+    dataset: Dataset;
+    activeYear: string | "ALL";
+    showDataset: boolean;
+    hasAoi: boolean;
+    rawCount: number;
+    aoiCount: number;
+    displayCount: number;
+  }): MapStatus {
+    const { dataset, activeYear, showDataset, hasAoi, rawCount, aoiCount, displayCount } = params;
 
-    const requestId = ++requestSeqRef.current;
-    const reloadData = options?.reloadData ?? false;
-    const zoom = map.getZoom();
-
-    const activeDataset = selectedProductRef.current;
-    const showLidar = activeDataset === "lidar" && zoom >= MIN_ZOOM_FOR_LIDAR_LOAD;
-    const showMnt = activeDataset === "mnt" && zoom >= MIN_ZOOM_FOR_MNT_LOAD;
-
-    setDatasetVisibility(map, "lidar", showLidar);
-    setDatasetVisibility(map, "mnt", showMnt);
-
-    if (!showLidar && !showMnt) {
-      rawLidarTilesRef.current = [];
-      rawMntTilesRef.current = [];
-      clearAoiDerivedCaches();
-      setRuntimeTiles("lidar", []);
-      setRuntimeTiles("mnt", []);
-      setTileSourceData(map, SRC_LIDAR, []);
-      setTileSourceData(map, SRC_MNT, []);
-      setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
-      setSelectedSourceData(map, SRC_MNT_SELECTED, []);
-      setLabelSourceData(map, SRC_LIDAR_LABELS, []);
-      setLabelSourceData(map, SRC_MNT_LABELS, []);
-      clearSelectionState(map, "lidar");
-      clearSelectionState(map, "mnt");
-      clearHover(map);
-      onYearsChangeRef.current?.({ lidar: [], mnt: [] });
-      onSelectionChangeRef.current([]);
-      setPanelInfo(null);
-      lastViewStateRef.current = { bboxKey: "", activeDataset: "" };
-      lastRefreshKeyRef.current = "";
-      perfMark("refreshTiles:end");
-      perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
-      return;
+    if (!showDataset) {
+      return {
+        tone: "info",
+        title: "Zoom insuffisant",
+        detail:
+          dataset === "lidar"
+            ? `Zoomez au moins jusqu’au niveau ${MIN_ZOOM_FOR_LIDAR_LOAD} pour charger les tuiles LiDAR.`
+            : `Zoomez au moins jusqu’au niveau ${MIN_ZOOM_FOR_MNT_LOAD} pour charger les tuiles MNT.`,
+      };
     }
 
-    const bounds = map.getBounds();
-    const bbox: [number, number, number, number] = [
-      bounds.getWest(),
-      bounds.getSouth(),
-      bounds.getEast(),
-      bounds.getNorth(),
-    ];
-    const bboxKey = bbox.map((n) => n.toFixed(5)).join(",");
-    const aoi = aoiRef.current;
-    const aoiKey = buildAoiKey(aoi);
-    const activeYear =
-      activeDataset === "lidar"
-        ? yearFilterRef.current.lidar
-        : yearFilterRef.current.mnt;
-    const refreshKey = [bboxKey, activeDataset, activeYear, aoiKey].join("|");
-
-    if (!reloadData && refreshKey === lastRefreshKeyRef.current) {
-      perfMark("refreshTiles:end");
-      perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
-      return;
+    if (rawCount === 0) {
+      return {
+        tone: "info",
+        title: "Aucune tuile disponible",
+        detail: "Aucune donnée n’a été trouvée dans l’emprise courante.",
+      };
     }
 
-    const mustReload =
-      reloadData ||
-      bboxKey !== lastViewStateRef.current.bboxKey ||
-      activeDataset !== lastViewStateRef.current.activeDataset;
-
-    let lidarRaw = rawLidarTilesRef.current;
-    let mntRaw = rawMntTilesRef.current;
-
-    if (mustReload) {
-      if (showLidar) {
-        lidarRaw = await loadTilesForBBox("lidar", bbox, cacheRef.current);
-        if (requestId !== requestSeqRef.current) return;
-        mntRaw = [];
-        clearAoiDerivedCaches("lidar");
-      } else if (showMnt) {
-        mntRaw = await loadTilesForBBox("mnt", bbox, cacheRef.current);
-        if (requestId !== requestSeqRef.current) return;
-        lidarRaw = [];
-        clearAoiDerivedCaches("mnt");
-      }
-
-      rawLidarTilesRef.current = lidarRaw;
-      rawMntTilesRef.current = mntRaw;
-      lastViewStateRef.current = { bboxKey, activeDataset };
+    if (hasAoi && aoiCount === 0) {
+      return {
+        tone: "warning",
+        title: "AOI hors couverture",
+        detail: "Aucune tuile n’intersecte la zone d’étude pour le produit actif.",
+      };
     }
 
-    const lidarAoiTiles = showLidar
-      ? getAoiFilteredTiles("lidar", bboxKey, aoi, lidarRaw)
-      : [];
-
-    const mntAoiTiles = showMnt
-      ? getAoiFilteredTiles("mnt", bboxKey, aoi, mntRaw)
-      : [];
-
-    const lidarYears = showLidar
-      ? getAvailableYearsForAoiTiles("lidar", bboxKey, aoi, lidarRaw, lidarAoiTiles)
-      : [];
-
-    const mntYears = showMnt
-      ? getAvailableYearsForAoiTiles("mnt", bboxKey, aoi, mntRaw, mntAoiTiles)
-      : [];
-
-    onYearsChangeRef.current?.({
-      lidar: lidarYears,
-      mnt: mntYears,
-    });
-
-    const lidarDisplayTiles = showLidar
-      ? filterTilesByYear(lidarAoiTiles, yearFilterRef.current.lidar)
-      : [];
-
-    const mntDisplayTiles = showMnt
-      ? filterTilesByYear(mntAoiTiles, yearFilterRef.current.mnt)
-      : [];
-
-    setTilesOnMap(map, "lidar", lidarDisplayTiles);
-    setTilesOnMap(map, "mnt", mntDisplayTiles);
-    clearHover(map);
-    syncPanelInfo();
-
-    const lidarRuntime = displayedLidarTilesRef.current;
-    const mntRuntime = displayedMntTilesRef.current;
-
-    if (aoi) {
-      applySelectionFromDisplayedTiles(map, lidarRuntime, mntRuntime);
-    } else {
-      applySelectionState(map, "lidar", new Set<string>(), false);
-      applySelectionState(map, "mnt", new Set<string>(), false);
-      setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
-      setSelectedSourceData(map, SRC_MNT_SELECTED, []);
-      onSelectionChangeRef.current([]);
+    if (displayCount === 0 && activeYear !== "ALL") {
+      return {
+        tone: "info",
+        title: "Aucun résultat pour ce millésime",
+        detail: `Aucune tuile ${dataset.toUpperCase()} n’est disponible pour l’année ${activeYear} dans le contexte courant.`,
+      };
     }
 
-    lastRefreshKeyRef.current = refreshKey;
-    perfMark("refreshTiles:end");
-    perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
+    return null;
   }
 
+  /**
+   * refreshTiles
+   * ------------------
+   * Pipeline principal de la carte :
+   *
+   * 1. Détermine dataset actif + zoom
+   * 2. Charge tuiles bbox (si nécessaire)
+   * 3. Applique cache AOI
+   * 4. Calcule années disponibles
+   * 5. Applique filtre année
+   * 6. Met à jour sources/layers
+   * 7. Met à jour sélection
+   */
+  async function refreshTiles(map: Map, options?: { reloadData?: boolean }) {
+    perfMark("refreshTiles:start");
+    const uiSeq = ++refreshUiSeqRef.current;
+    setIsRefreshing(true);
+
+    try {
+      if (!map.isStyleLoaded()) return;
+      ensureCustomSourcesAndLayers(map);
+
+      const requestId = ++requestSeqRef.current;
+      const reloadData = options?.reloadData ?? false;
+      const zoom = map.getZoom();
+
+      const activeDataset = selectedProductRef.current;
+      const showLidar = activeDataset === "lidar" && zoom >= MIN_ZOOM_FOR_LIDAR_LOAD;
+      const showMnt = activeDataset === "mnt" && zoom >= MIN_ZOOM_FOR_MNT_LOAD;
+
+      setDatasetVisibility(map, "lidar", showLidar);
+      setDatasetVisibility(map, "mnt", showMnt);
+
+      if (!showLidar && !showMnt) {
+        rawLidarTilesRef.current = [];
+        rawMntTilesRef.current = [];
+        clearAoiDerivedCaches();
+        setRuntimeTiles("lidar", []);
+        setRuntimeTiles("mnt", []);
+        setTileSourceData(map, SRC_LIDAR, []);
+        setTileSourceData(map, SRC_MNT, []);
+        setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
+        setSelectedSourceData(map, SRC_MNT_SELECTED, []);
+        setLabelSourceData(map, SRC_LIDAR_LABELS, []);
+        setLabelSourceData(map, SRC_MNT_LABELS, []);
+        clearSelectionState(map, "lidar");
+        clearSelectionState(map, "mnt");
+        clearHover(map);
+        onYearsChangeRef.current?.({ lidar: [], mnt: [] });
+        onSelectionChangeRef.current([]);
+        setPanelInfo(null);
+        lastViewStateRef.current = { bboxKey: "", activeDataset: "" };
+        lastRefreshKeyRef.current = "";
+
+        if (uiSeq === refreshUiSeqRef.current) {
+          setMapStatus(
+            computeMapStatus({
+              dataset: activeDataset,
+              activeYear: activeDataset === "lidar" ? yearFilterRef.current.lidar : yearFilterRef.current.mnt,
+              showDataset: false,
+              hasAoi: Boolean(aoiRef.current),
+              rawCount: 0,
+              aoiCount: 0,
+              displayCount: 0,
+            })
+          );
+        }
+
+        return;
+      }
+
+      const bounds = map.getBounds();
+      const bbox: [number, number, number, number] = [
+        bounds.getWest(),
+        bounds.getSouth(),
+        bounds.getEast(),
+        bounds.getNorth(),
+      ];
+      const bboxKey = bbox.map((n) => n.toFixed(5)).join(",");
+      const aoi = aoiRef.current;
+      const aoiKey = buildAoiKey(aoi);
+      const activeYear =
+        activeDataset === "lidar"
+          ? yearFilterRef.current.lidar
+          : yearFilterRef.current.mnt;
+      const refreshKey = [bboxKey, activeDataset, activeYear, aoiKey].join("|");
+
+      if (!reloadData && refreshKey === lastRefreshKeyRef.current) {
+        return;
+      }
+
+      const mustReload =
+        reloadData ||
+        bboxKey !== lastViewStateRef.current.bboxKey ||
+        activeDataset !== lastViewStateRef.current.activeDataset;
+
+      let lidarRaw = rawLidarTilesRef.current;
+      let mntRaw = rawMntTilesRef.current;
+
+      if (mustReload) {
+        if (showLidar) {
+          lidarRaw = await loadTilesForBBox("lidar", bbox, cacheRef.current);
+          if (requestId !== requestSeqRef.current) return;
+          mntRaw = [];
+          clearAoiDerivedCaches("lidar");
+        } else if (showMnt) {
+          mntRaw = await loadTilesForBBox("mnt", bbox, cacheRef.current);
+          if (requestId !== requestSeqRef.current) return;
+          lidarRaw = [];
+          clearAoiDerivedCaches("mnt");
+        }
+
+        rawLidarTilesRef.current = lidarRaw;
+        rawMntTilesRef.current = mntRaw;
+        lastViewStateRef.current = { bboxKey, activeDataset };
+      }
+
+      const lidarAoiTiles = showLidar
+        ? getAoiFilteredTiles("lidar", bboxKey, aoi, lidarRaw)
+        : [];
+
+      const mntAoiTiles = showMnt
+        ? getAoiFilteredTiles("mnt", bboxKey, aoi, mntRaw)
+        : [];
+
+      const lidarYears = showLidar
+        ? getAvailableYearsForAoiTiles("lidar", bboxKey, aoi, lidarRaw, lidarAoiTiles)
+        : [];
+
+      const mntYears = showMnt
+        ? getAvailableYearsForAoiTiles("mnt", bboxKey, aoi, mntRaw, mntAoiTiles)
+        : [];
+
+      onYearsChangeRef.current?.({
+        lidar: lidarYears,
+        mnt: mntYears,
+      });
+
+      const lidarDisplayTiles = showLidar
+        ? filterTilesByYear(lidarAoiTiles, yearFilterRef.current.lidar)
+        : [];
+
+      const mntDisplayTiles = showMnt
+        ? filterTilesByYear(mntAoiTiles, yearFilterRef.current.mnt)
+        : [];
+
+      setTilesOnMap(map, "lidar", lidarDisplayTiles);
+      setTilesOnMap(map, "mnt", mntDisplayTiles);
+      clearHover(map);
+      syncPanelInfo();
+
+      const lidarRuntime = displayedLidarTilesRef.current;
+      const mntRuntime = displayedMntTilesRef.current;
+
+      if (aoi) {
+        applySelectionFromDisplayedTiles(map, lidarRuntime, mntRuntime);
+      } else {
+        applySelectionState(map, "lidar", new Set<string>(), false);
+        applySelectionState(map, "mnt", new Set<string>(), false);
+        setSelectedSourceData(map, SRC_LIDAR_SELECTED, []);
+        setSelectedSourceData(map, SRC_MNT_SELECTED, []);
+        onSelectionChangeRef.current([]);
+      }
+
+      const activeRawCount = activeDataset === "lidar" ? lidarRaw.length : mntRaw.length;
+      const activeAoiCount = activeDataset === "lidar" ? lidarAoiTiles.length : mntAoiTiles.length;
+      const activeDisplayCount = activeDataset === "lidar" ? lidarDisplayTiles.length : mntDisplayTiles.length;
+
+      if (uiSeq === refreshUiSeqRef.current) {
+        setMapStatus(
+          computeMapStatus({
+            dataset: activeDataset,
+            activeYear,
+            showDataset: true,
+            hasAoi: Boolean(aoi),
+            rawCount: activeRawCount,
+            aoiCount: activeAoiCount,
+            displayCount: activeDisplayCount,
+          })
+        );
+      }
+
+      lastRefreshKeyRef.current = refreshKey;
+    } catch (error) {
+      console.error("Erreur dans refreshTiles :", error);
+
+      if (uiSeq === refreshUiSeqRef.current) {
+        setMapStatus({
+          tone: "error",
+          title: "Erreur de chargement cartographique",
+          detail: error instanceof Error ? error.message : "Une erreur inconnue est survenue.",
+        });
+      }
+    } finally {
+      if (uiSeq === refreshUiSeqRef.current) {
+        setIsRefreshing(false);
+      }
+      perfMark("refreshTiles:end");
+      perfMeasure("refreshTiles:total", "refreshTiles:start", "refreshTiles:end");
+    }
+  }
+
+  /**
+   * Debounce + batching des refresh
+   * permet :
+   * - éviter spam refresh lors du pan/zoom
+   * - fusionner plusieurs triggers
+   */
   function scheduleRefresh(map: Map, options?: { delay?: number; reloadData?: boolean; reason?: string }) {
     const delay = options?.delay ?? 80;
     const reloadData = options?.reloadData ?? false;
@@ -1010,6 +1365,14 @@ export default function MapView(props: Props) {
     }, delay);
   }
 
+  /**
+   * Initialisation de la carte MapLibre
+   * + binding des événements :
+   * - click
+   * - hover
+   * - moveend
+   * - ajout des contrôles de navigation et d’échelle
+   */
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -1024,6 +1387,11 @@ export default function MapView(props: Props) {
     lastAppliedStyleKeyRef.current = styleSpecKey;
     setMapZoom(map.getZoom());
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+    if (!scaleControlAddedRef.current) {
+      map.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 120 }), "bottom-left");
+      scaleControlAddedRef.current = true;
+    }
 
     const handleClick = (e: maplibregl.MapMouseEvent) => {
       const feature = getInteractiveFeaturesAtPoint(map, e.point)[0];
@@ -1070,8 +1438,12 @@ export default function MapView(props: Props) {
       setHoverSourceData(map, null);
       hasInitialLoadCompletedRef.current = true;
       setMapZoom(map.getZoom());
-      if (aoiRef.current) fitMapToAoi(map, aoiRef.current);
-      else await refreshTiles(map, { reloadData: true });
+
+      if (aoiRef.current) {
+        fitMapToAoi(map, aoiRef.current);
+      } else {
+        await refreshTiles(map, { reloadData: true });
+      }
     };
 
     map.on("load", handleLoad);
@@ -1093,9 +1465,14 @@ export default function MapView(props: Props) {
       map.off("moveend", handleMoveEnd);
       map.remove();
       mapRef.current = null;
+      scaleControlAddedRef.current = false;
     };
   }, [styleSpec, styleSpecKey]);
 
+  /**
+   * Réagit au changement de style de fond
+   * et réinjecte ensuite les couches métier.
+   */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !hasInitialLoadCompletedRef.current || lastAppliedStyleKeyRef.current === styleSpecKey) return;
@@ -1111,6 +1488,12 @@ export default function MapView(props: Props) {
     });
   }, [styleSpec, styleSpecKey]);
 
+  /**
+   * Réagit au changement d’AOI :
+   * - reset caches
+   * - fit sur AOI
+   * - relance pipeline
+   */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
@@ -1121,6 +1504,7 @@ export default function MapView(props: Props) {
     if (!props.aoi) {
       lastFittedAoiKeyRef.current = "";
       clearSelectionImmediately(map);
+      setMapStatus(null);
       scheduleRefresh(map, { delay: 0, reloadData: false, reason: "aoi-cleared" });
       return;
     }
@@ -1140,19 +1524,30 @@ export default function MapView(props: Props) {
     scheduleRefresh(map, { delay: 0, reloadData: false, reason: "aoi-updated" });
   }, [props.aoi]);
 
+  /**
+   * Changement produit :
+   * - reset sélection
+   * - reload données
+   */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
     clearAoiDerivedCaches();
     clearSelectionImmediately(map);
+    setMapStatus(null);
     scheduleRefresh(map, { delay: 0, reloadData: true, reason: "selected-product-change" });
   }, [props.selectedProduct]);
 
+  /**
+   * Changement filtre année :
+   * - refresh léger sans reload brut
+   */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
+    setMapStatus(null);
     scheduleRefresh(map, { delay: 0, reloadData: false, reason: "year-filter-change" });
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
@@ -1160,12 +1555,177 @@ export default function MapView(props: Props) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} className="map" style={{ position: "absolute", inset: 0 }} />
 
+      {/* Menu rétractable des fonds cartographiques */}
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          zIndex: 32,
+          width: isBasemapMenuOpen ? 320 : "auto",
+          maxWidth: "calc(100% - 24px)",
+          borderRadius: 14,
+          border: "1px solid #d1d5db",
+          background: "rgba(255,255,255,0.97)",
+          boxShadow: "0 12px 26px rgba(0,0,0,0.12)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            padding: "10px 12px",
+            borderBottom: isBasemapMenuOpen ? "1px solid #e5e7eb" : "none",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, color: "#111827" }}>
+              Fonds cartographiques
+            </div>
+            {isBasemapMenuOpen && (
+              <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
+                OSM + services Web du gouvernement du Québec
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsBasemapMenuOpen((prev) => !prev)}
+            style={{
+              border: "1px solid #d1d5db",
+              background: "#ffffff",
+              borderRadius: 10,
+              padding: "6px 10px",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#111827",
+            }}
+            title={isBasemapMenuOpen ? "Réduire" : "Déployer"}
+          >
+            {isBasemapMenuOpen ? "Réduire" : "Fonds"}
+          </button>
+        </div>
+
+        {isBasemapMenuOpen && (
+          <div style={{ padding: 12 }}>
+            <div
+              style={{
+                marginBottom: 10,
+                padding: 10,
+                borderRadius: 12,
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>
+                Fond actif
+              </div>
+              <div style={{ fontWeight: 700, color: "#111827" }}>{currentBasemap.label}</div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                {currentBasemap.subtitle}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              {basemapOptions.map((option) => {
+                const isActive = option.id === currentBasemap.id;
+
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setSelectedBasemapId(option.id)}
+                    style={{
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      border: isActive ? "1px solid #2563eb" : "1px solid #e5e7eb",
+                      background: isActive ? "#eff6ff" : "#ffffff",
+                      color: "#111827",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{option.label}</div>
+                    <div style={{ marginTop: 2, fontSize: 12, color: "#6b7280" }}>
+                      {option.subtitle}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Loader discret pendant l’actualisation de la carte */}
+      {isRefreshing && (
+        <div
+          style={{
+            position: "absolute",
+            top: isBasemapMenuOpen ? 240 : 64,
+            left: 12,
+            zIndex: 30,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid #d1d5db",
+            background: "rgba(255,255,255,0.96)",
+            boxShadow: "0 8px 18px rgba(0,0,0,0.10)",
+            fontSize: 12,
+            color: "#111827",
+          }}
+        >
+          <div
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: "#2563eb",
+              flex: "0 0 auto",
+            }}
+          />
+          Actualisation de la carte…
+        </div>
+      )}
+
+      {/* Message contextuel : aucun résultat, AOI hors couverture, erreur, etc. */}
+      {mapStatus && !isRefreshing && (
+        <div
+          style={{
+            position: "absolute",
+            top: isBasemapMenuOpen ? 240 : 64,
+            left: 12,
+            zIndex: 29,
+            maxWidth: 420,
+            borderRadius: 12,
+            boxShadow: "0 10px 24px rgba(0,0,0,0.10)",
+            padding: "10px 12px",
+            fontSize: 13,
+            lineHeight: 1.45,
+            ...getMapStatusStyle(mapStatus.tone),
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: mapStatus.detail ? 4 : 0 }}>
+            {mapStatus.title}
+          </div>
+          {mapStatus.detail && <div>{mapStatus.detail}</div>}
+        </div>
+      )}
+
+      {/* Indication utilisateur : zoom insuffisant pour le dataset actif */}
       {(showLidarZoomHint || showMntZoomHint) && (
         <div
           style={{
             position: "absolute",
             left: 12,
-            bottom: 12,
+            bottom: 58,
             zIndex: 20,
             maxWidth: 420,
             background: "rgba(255,255,255,0.96)",
@@ -1184,6 +1744,10 @@ export default function MapView(props: Props) {
         </div>
       )}
 
+      {/* Panneau d’information tuile :
+          - metadata
+          - accès téléchargement
+          - interaction utilisateur */}
       {panelInfo && (
         <div
           style={{
@@ -1191,30 +1755,121 @@ export default function MapView(props: Props) {
             top: 12,
             right: 12,
             zIndex: 20,
-            width: 320,
+            width: 360,
             maxWidth: "calc(100% - 24px)",
-            background: "rgba(255,255,255,0.96)",
+            background: "rgba(255,255,255,0.97)",
             border: "1px solid #d1d5db",
-            borderRadius: 10,
-            boxShadow: "0 10px 24px rgba(0,0,0,0.14)",
-            padding: 12,
+            borderRadius: 16,
+            boxShadow: "0 16px 32px rgba(0,0,0,0.16)",
+            padding: 14,
             fontSize: 13,
-            lineHeight: 1.4,
+            lineHeight: 1.45,
           }}
         >
-          <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-            <div style={{ fontWeight: 700, color: "#111827" }}>{panelInfo.name || "Tuile"}</div>
-            <button type="button" onClick={() => setPanelInfo(null)} style={{ border: "none", background: "transparent", fontSize: 18, lineHeight: 1, cursor: "pointer", color: "#6b7280" }} aria-label="Fermer" title="Fermer">×</button>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "start",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: 12,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontWeight: 800,
+                  fontSize: 16,
+                  color: "#111827",
+                  lineHeight: 1.25,
+                  marginBottom: 8,
+                  wordBreak: "break-word",
+                }}
+              >
+                {panelInfo.name || "Tuile"}
+              </div>
+
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <span style={getBadgeStyle("product")}>
+                  {panelInfo.product ? panelInfo.product.toUpperCase() : "UNKNOWN"}
+                </span>
+                <span style={getBadgeStyle("year")}>
+                  {panelInfo.year ?? "Année N/D"}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setPanelInfo(null)}
+              style={{
+                border: "1px solid #d1d5db",
+                background: "#ffffff",
+                width: 34,
+                height: 34,
+                borderRadius: 10,
+                fontSize: 18,
+                lineHeight: 1,
+                cursor: "pointer",
+                color: "#6b7280",
+                flex: "0 0 auto",
+              }}
+              aria-label="Fermer"
+              title="Fermer"
+            >
+              ×
+            </button>
           </div>
 
-          <div style={{ marginBottom: 4 }}><strong>Produit :</strong> {panelInfo.product || "unknown"}</div>
-          <div style={{ marginBottom: 4 }}><strong>ID :</strong> {panelInfo.id || "unknown"}</div>
-          <div style={{ marginBottom: 4 }}><strong>Année :</strong> {panelInfo.year ?? "N/D"}</div>
-          <div style={{ marginBottom: 8 }}><strong>Fournisseur :</strong> {panelInfo.provider ? String(panelInfo.provider) : "N/D"}</div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr",
+              gap: 8,
+              marginBottom: 12,
+            }}
+          >
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Identifiant</div>
+              <div style={{ fontWeight: 700, color: "#111827", wordBreak: "break-word" }}>
+                {panelInfo.id || "unknown"}
+              </div>
+            </div>
 
-          <div style={{ marginBottom: 10, wordBreak: "break-all", color: "#374151" }}>
-            <strong>URL :</strong>{" "}
-            {panelInfo.url ? panelInfo.url : "URL non disponible"}
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Fournisseur</div>
+              <div style={{ fontWeight: 600, color: "#111827", wordBreak: "break-word" }}>
+                {panelInfo.provider ? String(panelInfo.provider) : "N/D"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                background: "#f9fafb",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>URL</div>
+              <div style={{ color: "#374151", wordBreak: "break-all" }}>
+                {panelInfo.url ? panelInfo.url : "URL non disponible"}
+              </div>
+            </div>
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1223,13 +1878,13 @@ export default function MapView(props: Props) {
               disabled={!panelInfo.url}
               onClick={() => openUrl(panelInfo.url)}
               style={{
-                padding: "8px 10px",
-                borderRadius: 8,
+                padding: "10px 12px",
+                borderRadius: 10,
                 border: "1px solid #2563eb",
                 background: panelInfo.url ? "#2563eb" : "#9ca3af",
                 color: "#ffffff",
                 cursor: panelInfo.url ? "pointer" : "not-allowed",
-                fontWeight: 600,
+                fontWeight: 700,
               }}
             >
               Télécharger
@@ -1239,12 +1894,13 @@ export default function MapView(props: Props) {
               type="button"
               onClick={() => setPanelInfo(null)}
               style={{
-                padding: "8px 10px",
-                borderRadius: 8,
+                padding: "10px 12px",
+                borderRadius: 10,
                 border: "1px solid #d1d5db",
                 background: "#ffffff",
                 color: "#111827",
                 cursor: "pointer",
+                fontWeight: 600,
               }}
             >
               Fermer
