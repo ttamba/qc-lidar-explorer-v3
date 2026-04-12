@@ -548,7 +548,7 @@ export default function MapView(props: Props) {
         label: "Québec Topo 1:20 000",
         subtitle: "Gouvernement du Québec",
         tiles: [
-          "https://servicesmatriciels.mern.gouv.qc.ca/erdas-iws/ogc/wmts/Cartes_Images?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=BDTQ-20k&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
+          "https://geoegl.msp.gouv.qc.ca/carto/wmts/1.0.0/carte_gouv_qc_public/default/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.png",
         ],
         tileSize: 256,
         attribution: "© Gouvernement du Québec",
