@@ -18,9 +18,6 @@ type AvailableYears = { lidar: string[]; mnt: string[] };
 type YearFilter = { lidar: string | "ALL"; mnt: string | "ALL" };
 type StatusTone = "info" | "success" | "warning" | "error";
 
-/**
- * Déduit le produit d'une tuile pour compter proprement LiDAR vs MNT.
- */
 function getTileProduct(tile: TileFeature): Dataset | "" {
   const props = (tile?.properties ?? {}) as Record<string, unknown>;
   const raw =
@@ -31,33 +28,27 @@ function getTileProduct(tile: TileFeature): Dataset | "" {
   return "";
 }
 
-/**
- * Détecte si l'erreur de validation indique un problème de projection.
- */
 function isWgs84ValidationError(message: string): boolean {
   return /WGS84|EPSG:4326/i.test(message);
 }
 
-/**
- * Style visuel unifié pour les cartes de statut.
- */
 function getStatusCardStyle(tone: StatusTone): React.CSSProperties {
   switch (tone) {
     case "success":
       return {
-        border: "1px solid #86efac",
+        border: "1px solid #bbf7d0",
         background: "#f0fdf4",
         color: "#166534",
       };
     case "warning":
       return {
-        border: "1px solid #fcd34d",
+        border: "1px solid #fde68a",
         background: "#fffbeb",
         color: "#92400e",
       };
     case "error":
       return {
-        border: "1px solid #fca5a5",
+        border: "1px solid #fecaca",
         background: "#fef2f2",
         color: "#991b1b",
       };
@@ -71,9 +62,6 @@ function getStatusCardStyle(tone: StatusTone): React.CSSProperties {
   }
 }
 
-/**
- * Conteneur visuel générique pour les grandes sections du panneau latéral.
- */
 function SectionCard(props: {
   title: string;
   children: React.ReactNode;
@@ -83,17 +71,33 @@ function SectionCard(props: {
     <section
       style={{
         marginTop: 14,
-        padding: 14,
+        padding: 16,
         border: "1px solid #e5e7eb",
-        borderRadius: 12,
+        borderRadius: 16,
         background: "#ffffff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+        boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
       }}
     >
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{props.title}</div>
+      <div style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            fontSize: 15,
+            fontWeight: 700,
+            color: "#111827",
+            letterSpacing: 0.1,
+          }}
+        >
+          {props.title}
+        </div>
         {props.subtitle && (
-          <div style={{ marginTop: 4, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+          <div
+            style={{
+              marginTop: 5,
+              fontSize: 12,
+              color: "#6b7280",
+              lineHeight: 1.5,
+            }}
+          >
             {props.subtitle}
           </div>
         )}
@@ -103,9 +107,6 @@ function SectionCard(props: {
   );
 }
 
-/**
- * Carte de message utilisateur : info, succès, alerte ou erreur.
- */
 function StatusCard(props: {
   tone: StatusTone;
   children: React.ReactNode;
@@ -113,11 +114,11 @@ function StatusCard(props: {
   return (
     <div
       style={{
-        marginTop: 10,
-        padding: 10,
-        borderRadius: 10,
+        marginTop: 12,
+        padding: "10px 12px",
+        borderRadius: 12,
         fontSize: 12,
-        lineHeight: 1.5,
+        lineHeight: 1.55,
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
         ...getStatusCardStyle(props.tone),
@@ -128,9 +129,6 @@ function StatusCard(props: {
   );
 }
 
-/**
- * Petit indicateur chiffré pour afficher les stats principales.
- */
 function SmallStat(props: {
   label: string;
   value: React.ReactNode;
@@ -138,21 +136,28 @@ function SmallStat(props: {
   return (
     <div
       style={{
-        padding: "8px 10px",
-        borderRadius: 10,
-        background: "#f9fafb",
+        padding: "10px 12px",
+        borderRadius: 12,
+        background: "#f8fafc",
         border: "1px solid #e5e7eb",
       }}
     >
-      <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>{props.label}</div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{props.value}</div>
+      <div
+        style={{
+          fontSize: 11,
+          color: "#6b7280",
+          marginBottom: 4,
+          textTransform: "uppercase",
+          letterSpacing: 0.35,
+        }}
+      >
+        {props.label}
+      </div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: "#111827" }}>{props.value}</div>
     </div>
   );
 }
 
-/**
- * Bouton standardisé pour harmoniser les actions du panneau.
- */
 function ActionButton(props: {
   onClick?: () => void;
   disabled?: boolean;
@@ -163,8 +168,8 @@ function ActionButton(props: {
   const variant = props.variant ?? "secondary";
 
   let style: React.CSSProperties = {
-    padding: "9px 12px",
-    borderRadius: 10,
+    padding: "10px 13px",
+    borderRadius: 12,
     border: "1px solid #d1d5db",
     background: "#ffffff",
     color: "#111827",
@@ -172,6 +177,7 @@ function ActionButton(props: {
     fontWeight: 600,
     fontSize: 13,
     opacity: props.disabled ? 0.6 : 1,
+    transition: "all 120ms ease",
   };
 
   if (variant === "primary") {
@@ -180,13 +186,14 @@ function ActionButton(props: {
       border: "1px solid #2563eb",
       background: "#2563eb",
       color: "#ffffff",
+      boxShadow: "0 4px 10px rgba(37, 99, 235, 0.16)",
     };
   }
 
   if (variant === "danger") {
     style = {
       ...style,
-      border: "1px solid #dc2626",
+      border: "1px solid #ef4444",
       background: "#ffffff",
       color: "#b91c1c",
     };
@@ -204,19 +211,58 @@ function ActionButton(props: {
   );
 }
 
+function Pill(props: {
+  children: React.ReactNode;
+  tone?: "neutral" | "blue" | "green" | "amber";
+}) {
+  const tone = props.tone ?? "neutral";
+
+  const styles: Record<string, React.CSSProperties> = {
+    neutral: {
+      background: "#f3f4f6",
+      color: "#374151",
+      border: "1px solid #e5e7eb",
+    },
+    blue: {
+      background: "#eff6ff",
+      color: "#1d4ed8",
+      border: "1px solid #bfdbfe",
+    },
+    green: {
+      background: "#f0fdf4",
+      color: "#166534",
+      border: "1px solid #bbf7d0",
+    },
+    amber: {
+      background: "#fffbeb",
+      color: "#92400e",
+      border: "1px solid #fde68a",
+    },
+  };
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "5px 9px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: 0.2,
+        ...styles[tone],
+      }}
+    >
+      {props.children}
+    </span>
+  );
+}
+
 export default function App() {
-  /**
-   * États métier principaux :
-   * AOI, sélection cartographique, filtres et années disponibles.
-   */
   const [selectedTiles, setSelectedTiles] = useState<TileFeature[]>([]);
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
 
-  /**
-   * États de reprojection assistée :
-   * on stocke temporairement l'AOI brute lorsqu'un CRS source doit être choisi.
-   */
   const [pendingAoiRaw, setPendingAoiRaw] = useState<any | null>(null);
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
   const [selectedSourceCrs, setSelectedSourceCrs] =
@@ -225,10 +271,6 @@ export default function App() {
     useState<SupportedSourceCrsCode | null>(null);
   const [isReprojectingAoi, setIsReprojectingAoi] = useState(false);
 
-  /**
-   * États d'interface :
-   * produit actif, année active, années disponibles et états de travail.
-   */
   const [selectedProduct, setSelectedProduct] = useState<Dataset>("lidar");
   const [yearFilter, setYearFilter] = useState<YearFilter>({
     lidar: "ALL",
@@ -242,17 +284,11 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string>("");
 
-  /**
-   * Valeurs dérivées du produit actif pour simplifier le rendu UI.
-   */
   const activeYears =
     selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
   const activeYear =
     selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
 
-  /**
-   * Compteurs de sélection pour afficher un résumé clair à l'utilisateur.
-   */
   const activeSelectionCount = useMemo(
     () => selectedTiles.filter((tile) => getTileProduct(tile) === selectedProduct).length,
     [selectedProduct, selectedTiles]
@@ -276,10 +312,6 @@ export default function App() {
   const canClearAoi = (hasAoi || hasPendingReprojection || !!aoiError) && !isBusy;
   const canClearSelection = totalSelectionCount > 0 && !isBusy;
 
-  /**
-   * Résumé d'état global affiché en haut du panneau :
-   * activité en cours, erreur, succès ou état d'attente.
-   */
   const statusSummary = useMemo(() => {
     if (loadingAoi) {
       return {
@@ -346,10 +378,6 @@ export default function App() {
     loadingAoi,
   ]);
 
-  /**
-   * Importe un fichier AOI, tente une validation directe,
-   * puis bascule en mode reprojection assistée si nécessaire.
-   */
   async function handleAoiFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -408,10 +436,6 @@ export default function App() {
     }
   }
 
-  /**
-   * Reprojette l'AOI en attente vers WGS84,
-   * puis valide et charge le résultat final.
-   */
   async function handleReprojectAndLoadAoi() {
     if (!pendingAoiRaw || isReprojectingAoi) return;
 
@@ -445,9 +469,6 @@ export default function App() {
     }
   }
 
-  /**
-   * Réinitialise complètement le contexte AOI et la sélection.
-   */
   function clearAoi() {
     setAoi(null);
     setSelectedTiles([]);
@@ -459,27 +480,17 @@ export default function App() {
     setDetectedSourceCrs(null);
   }
 
-  /**
-   * Vide uniquement la sélection cartographique courante.
-   */
   function clearSelection() {
     setSelectedTiles([]);
     setInfoMessage("Sélection vidée.");
   }
 
-  /**
-   * Change le produit actif et remet la sélection à zéro
-   * pour éviter les incohérences entre LiDAR et MNT.
-   */
   function handleSelectedProductChange(product: Dataset) {
     setSelectedProduct(product);
     setSelectedTiles([]);
     setInfoMessage("");
   }
 
-  /**
-   * Applique un filtre annuel sur le produit actif.
-   */
   function handleYearChange(value: string) {
     setYearFilter((prev) => ({
       ...prev,
@@ -489,10 +500,6 @@ export default function App() {
     setInfoMessage("");
   }
 
-  /**
-   * Met à jour les années disponibles remontées par la carte
-   * et corrige le filtre courant si l'année n'existe plus.
-   */
   function handleYearsChange(years: AvailableYears) {
     setAvailableYears(years);
 
@@ -508,9 +515,6 @@ export default function App() {
     }
   }
 
-  /**
-   * Exporte le bundle ZIP à partir de l'AOI et des tuiles sélectionnées.
-   */
   async function handleExport() {
     if (!canExport) return;
 
@@ -527,39 +531,89 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#f3f4f6" }}>
-      {/* Panneau latéral : contrôle utilisateur, statut, filtres et panier */}
+    <div
+      style={{
+        display: "flex",
+        height: "100vh",
+        background: "#eef2f7",
+        color: "#111827",
+      }}
+    >
       <aside
         style={{
-          width: 360,
-          padding: 14,
-          borderRight: "1px solid #d1d5db",
+          width: 380,
+          padding: 16,
+          borderRight: "1px solid #dbe3ee",
           overflowY: "auto",
-          background: "#f9fafb",
+          background:
+            "linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%)",
         }}
       >
-        {/* En-tête applicatif + résumé de statut */}
         <div
           style={{
-            padding: 14,
-            borderRadius: 14,
+            padding: 18,
+            borderRadius: 18,
             background: "#ffffff",
             border: "1px solid #e5e7eb",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.06)",
           }}
         >
-          <div style={{ fontSize: 19, fontWeight: 800, color: "#111827", marginBottom: 4 }}>
-            QC LiDAR / MNT Explorer
-          </div>
-          <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.45 }}>
-            Exploration, sélection et export de tuiles LiDAR et MNT à partir d’une zone d’étude.
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 12,
+              marginBottom: 8,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 800,
+                  color: "#0f172a",
+                  marginBottom: 4,
+                  lineHeight: 1.2,
+                }}
+              >
+                QC LiDAR / MNT Explorer
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: "#475569",
+                  lineHeight: 1.5,
+                }}
+              >
+                Exploration, sélection et export de tuiles à partir d’une zone d’étude.
+              </div>
+            </div>
+
+            <Pill
+              tone={
+                statusSummary.tone === "success"
+                  ? "green"
+                  : statusSummary.tone === "warning"
+                    ? "amber"
+                    : statusSummary.tone === "error"
+                      ? "neutral"
+                      : "blue"
+              }
+            >
+              {loadingAoi || isReprojectingAoi || isExporting
+                ? "Traitement"
+                : hasAoi
+                  ? "Prêt"
+                  : "Initial"}
+            </Pill>
           </div>
 
           <StatusCard tone={statusSummary.tone}>{statusSummary.message}</StatusCard>
 
           <div
             style={{
-              marginTop: 12,
+              marginTop: 14,
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
               gap: 8,
@@ -572,16 +626,33 @@ export default function App() {
           </div>
         </div>
 
-        {/* Chargement AOI + gestion de la reprojection assistée */}
         <SectionCard
-          title="Zone d’étude"
-          subtitle="Formats pris en charge : GeoJSON, KML, KMZ et Shapefile ZIP."
+          title="1. Zone d’étude"
+          subtitle="Chargez une AOI en GeoJSON, KML, KMZ ou Shapefile ZIP."
         >
+          <label
+            style={{
+              display: "block",
+              marginBottom: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#374151",
+            }}
+          >
+            Import du fichier
+          </label>
+
           <input
             type="file"
             onChange={handleAoiFile}
             disabled={isBusy}
-            style={{ width: "100%" }}
+            style={{
+              width: "100%",
+              padding: 8,
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: "#ffffff",
+            }}
           />
 
           {pendingAoiRaw && (
@@ -593,17 +664,17 @@ export default function App() {
           {pendingAoiRaw && (
             <div
               style={{
-                marginTop: 10,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #fcd34d",
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 14,
+                border: "1px solid #fde68a",
                 background: "#fffbeb",
                 color: "#92400e",
                 fontSize: 12,
-                lineHeight: 1.45,
+                lineHeight: 1.5,
               }}
             >
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Reprojection assistée</div>
+              <div style={{ fontWeight: 700, marginBottom: 10 }}>Reprojection assistée</div>
 
               {pendingAoiFileName && (
                 <div style={{ marginBottom: 8 }}>
@@ -614,11 +685,11 @@ export default function App() {
               {detectedSourceCrs && (
                 <div
                   style={{
-                    marginBottom: 8,
+                    marginBottom: 10,
                     padding: 8,
-                    borderRadius: 8,
+                    borderRadius: 10,
                     background: "#ecfccb",
-                    border: "1px solid #84cc16",
+                    border: "1px solid #a3e635",
                     color: "#365314",
                   }}
                 >
@@ -626,7 +697,13 @@ export default function App() {
                 </div>
               )}
 
-              <label style={{ display: "block", marginBottom: 6, fontWeight: 600 }}>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 6,
+                  fontWeight: 600,
+                }}
+              >
                 CRS source
               </label>
 
@@ -636,8 +713,8 @@ export default function App() {
                 style={{
                   width: "100%",
                   marginBottom: 10,
-                  padding: 8,
-                  borderRadius: 8,
+                  padding: 9,
+                  borderRadius: 10,
                   border: "1px solid #d1d5db",
                   background: "#ffffff",
                 }}
@@ -659,35 +736,27 @@ export default function App() {
                   {isReprojectingAoi ? "Reprojection..." : "Reprojeter et charger"}
                 </ActionButton>
 
-                <ActionButton
-                  onClick={clearAoi}
-                  disabled={isBusy}
-                  variant="secondary"
-                >
+                <ActionButton onClick={clearAoi} disabled={isBusy} variant="secondary">
                   Annuler
                 </ActionButton>
               </div>
 
-              <div style={{ marginTop: 8 }}>
-                La reprojection cible toujours <strong>WGS84 (EPSG:4326)</strong>.
+              <div style={{ marginTop: 10 }}>
+                La reprojection cible <strong>WGS84 (EPSG:4326)</strong>.
               </div>
             </div>
           )}
 
           {!pendingAoiRaw && (
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <ActionButton
-                onClick={clearAoi}
-                disabled={!canClearAoi}
-                variant="danger"
-              >
+            <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <ActionButton onClick={clearAoi} disabled={!canClearAoi} variant="danger">
                 Effacer la zone d’étude
               </ActionButton>
             </div>
           )}
 
           {!hasAoi && !loadingAoi && !aoiError && !pendingAoiRaw && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+            <div style={{ marginTop: 12, fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
               Aucune AOI chargée pour le moment.
             </div>
           )}
@@ -697,119 +766,132 @@ export default function App() {
           )}
         </SectionCard>
 
-        {/* Filtres métier : produit actif et année disponible */}
         <SectionCard
-          title="Filtres"
-          subtitle="Le produit actif contrôle l’affichage cartographique et le filtre annuel."
+          title="2. Filtres"
+          subtitle="Le produit actif pilote l’affichage cartographique et le filtrage annuel."
         >
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 700, marginBottom: 8, color: "#111827" }}>Produit</div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 10, color: "#111827" }}>Produit</div>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                cursor: isBusy ? "not-allowed" : "pointer",
-                color: "#111827",
-              }}
-            >
-              <input
-                type="radio"
-                name="selected-product"
-                checked={selectedProduct === "lidar"}
-                onChange={() => handleSelectedProductChange("lidar")}
-                disabled={isBusy}
-              />
-              LiDAR
-            </label>
-
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: isBusy ? "not-allowed" : "pointer",
-                color: "#111827",
-              }}
-            >
-              <input
-                type="radio"
-                name="selected-product"
-                checked={selectedProduct === "mnt"}
-                onChange={() => handleSelectedProductChange("mnt")}
-                disabled={isBusy}
-              />
-              MNT
-            </label>
-          </div>
-
-          <div>
-            <div style={{ fontWeight: 700, marginBottom: 8, color: "#111827" }}>
-              {selectedProduct === "lidar" ? "LiDAR" : "MNT"} — année
-            </div>
-
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                cursor: isBusy ? "not-allowed" : "pointer",
-              }}
-            >
-              <input
-                type="radio"
-                name="selected-year"
-                checked={activeYear === "ALL"}
-                onChange={() => handleYearChange("ALL")}
-                disabled={isBusy}
-              />
-              Toutes les années
-            </label>
-
-            {activeYears.map((year) => (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <label
-                key={year}
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
-                  marginBottom: 8,
+                  padding: "9px 11px",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 12,
+                  background: selectedProduct === "lidar" ? "#eff6ff" : "#ffffff",
+                  cursor: isBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="selected-product"
+                  checked={selectedProduct === "lidar"}
+                  onChange={() => handleSelectedProductChange("lidar")}
+                  disabled={isBusy}
+                />
+                LiDAR
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "9px 11px",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 12,
+                  background: selectedProduct === "mnt" ? "#eff6ff" : "#ffffff",
+                  cursor: isBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="selected-product"
+                  checked={selectedProduct === "mnt"}
+                  onChange={() => handleSelectedProductChange("mnt")}
+                  disabled={isBusy}
+                />
+                MNT
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 10, color: "#111827" }}>
+              {selectedProduct === "lidar" ? "LiDAR" : "MNT"} — année
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 10px",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 12,
+                  background: activeYear === "ALL" ? "#f8fafc" : "#ffffff",
                   cursor: isBusy ? "not-allowed" : "pointer",
                 }}
               >
                 <input
                   type="radio"
                   name="selected-year"
-                  checked={activeYear === year}
-                  onChange={() => handleYearChange(year)}
+                  checked={activeYear === "ALL"}
+                  onChange={() => handleYearChange("ALL")}
                   disabled={isBusy}
                 />
-                {year}
+                Toutes les années
               </label>
-            ))}
+
+              {activeYears.map((year) => (
+                <label
+                  key={year}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 10px",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    background: activeYear === year ? "#f8fafc" : "#ffffff",
+                    cursor: isBusy ? "not-allowed" : "pointer",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="selected-year"
+                    checked={activeYear === year}
+                    onChange={() => handleYearChange(year)}
+                    disabled={isBusy}
+                  />
+                  {year}
+                </label>
+              ))}
+            </div>
 
             {activeYears.length === 0 && (
-              <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+              <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
                 Aucune année disponible pour le produit actif dans la vue courante.
               </div>
             )}
           </div>
         </SectionCard>
 
-        {/* Résumé de la sélection et actions d'export */}
         <SectionCard
-          title="Sélection"
-          subtitle="Les tuiles sélectionnées sur la carte alimentent directement l’export."
+          title="3. Sélection et export"
+          subtitle="Les tuiles retenues sur la carte alimentent directement le bundle ZIP."
         >
           <div
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr 1fr",
               gap: 8,
-              marginBottom: 12,
+              marginBottom: 14,
             }}
           >
             <SmallStat label="Total" value={totalSelectionCount} />
@@ -818,11 +900,7 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <ActionButton
-              onClick={handleExport}
-              disabled={!canExport}
-              variant="primary"
-            >
+            <ActionButton onClick={handleExport} disabled={!canExport} variant="primary">
               {isExporting ? "Export..." : "Exporter (ZIP)"}
             </ActionButton>
 
@@ -836,37 +914,77 @@ export default function App() {
           </div>
 
           {!hasAoi && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+            <div style={{ marginTop: 12, fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
               Chargez d’abord une AOI pour activer une sélection exploitable.
             </div>
           )}
 
           {hasAoi && totalSelectionCount === 0 && !isBusy && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+            <div style={{ marginTop: 12, fontSize: 12, color: "#6b7280", lineHeight: 1.5 }}>
               Aucune tuile sélectionnée actuellement pour les filtres actifs.
             </div>
           )}
         </SectionCard>
 
-        {/* Panier : liste détaillée des tuiles retenues */}
         <SectionCard
-          title="Panier"
-          subtitle="Résumé des tuiles retenues pour l’export."
+          title="4. Panier"
+          subtitle="Résumé détaillé des tuiles retenues pour l’export."
         >
           <Basket tiles={selectedTiles} />
         </SectionCard>
       </aside>
 
-      {/* Zone principale : rendu cartographique et interactions sur la carte */}
-      <main style={{ flex: 1, minWidth: 0 }}>
-        <MapView
-          aoi={aoi}
-          basemaps={null}
-          selectedProduct={selectedProduct}
-          yearFilter={yearFilter}
-          onYearsChange={handleYearsChange}
-          onSelectionChange={setSelectedTiles}
-        />
+      <main
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          background: "#e9eef5",
+        }}
+      >
+        <div
+          style={{
+            height: 64,
+            padding: "0 18px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: "1px solid #dbe3ee",
+            background: "rgba(255,255,255,0.82)",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>
+              Carte d’exploration
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>
+              Visualisation des tuiles, sélection cartographique et filtrage par produit/année
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Pill tone="blue">Fond OSM</Pill>
+            <Pill tone="neutral">
+              {selectedProduct === "lidar" ? "Mode LiDAR" : "Mode MNT"}
+            </Pill>
+            <Pill tone={hasAoi ? "green" : "neutral"}>
+              {hasAoi ? "AOI chargée" : "Sans AOI"}
+            </Pill>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <MapView
+            aoi={aoi}
+            basemaps={null}
+            selectedProduct={selectedProduct}
+            yearFilter={yearFilter}
+            onYearsChange={handleYearsChange}
+            onSelectionChange={setSelectedTiles}
+          />
+        </div>
       </main>
     </div>
   );

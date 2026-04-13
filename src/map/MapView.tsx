@@ -161,6 +161,8 @@ const QUEBEC_BOUNDS: LngLatBoundsLike = [
   [-79.8, 44.5],
   [-57.0, 62.2],
 ];
+const INITIAL_RESET_CENTER: [number, number] = [-68.4, 53.35];
+const INITIAL_RESET_ZOOM = 5.4;
 
 /**
  * Throttle basé sur requestAnimationFrame
@@ -319,7 +321,7 @@ function getAoiBounds(aoi: AoiFeature | null): LngLatBoundsLike | null {
   ];
 }
 
-function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSProperties {
+function getBadgeStyle(kind: "neutral" | "product" | "year" | "selection"): React.CSSProperties {
   if (kind === "product") {
     return {
       display: "inline-flex",
@@ -348,6 +350,20 @@ function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSPropertie
     };
   }
 
+  if (kind === "selection") {
+    return {
+      display: "inline-flex",
+      alignItems: "center",
+      padding: "4px 8px",
+      borderRadius: 999,
+      background: "#f0fdf4",
+      color: "#166534",
+      border: "1px solid #86efac",
+      fontSize: 11,
+      fontWeight: 700,
+    };
+  }
+
   return {
     display: "inline-flex",
     alignItems: "center",
@@ -358,6 +374,21 @@ function getBadgeStyle(kind: "neutral" | "product" | "year"): React.CSSPropertie
     border: "1px solid #e5e7eb",
     fontSize: 11,
     fontWeight: 600,
+  };
+}
+
+function getMapButtonStyle(isPrimary = false): React.CSSProperties {
+  return {
+    minHeight: 34,
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: isPrimary ? "1px solid #2563eb" : "1px solid #d1d5db",
+    background: isPrimary ? "#2563eb" : "rgba(255,255,255,0.97)",
+    color: isPrimary ? "#ffffff" : "#111827",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 700,
+    boxShadow: "0 6px 16px rgba(0,0,0,0.08)",
   };
 }
 
@@ -464,10 +495,12 @@ export default function MapView(props: Props) {
    * États UX carte :
    * - chargement discret
    * - menu de fond cartographique
+   * - overlays affichables
    */
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBasemapMenuOpen, setIsBasemapMenuOpen] = useState(false);
   const [selectedBasemapId, setSelectedBasemapId] = useState("osm");
+  const [isLegendOpen, setIsLegendOpen] = useState(true);
 
   useEffect(() => {
     selectedProductRef.current = props.selectedProduct;
@@ -545,6 +578,12 @@ export default function MapView(props: Props) {
 
   const showLidarZoomHint = props.selectedProduct === "lidar" && mapZoom < MIN_ZOOM_FOR_LIDAR_LOAD;
   const showMntZoomHint = props.selectedProduct === "mnt" && mapZoom < MIN_ZOOM_FOR_MNT_LOAD;
+  const activeYear = props.selectedProduct === "lidar" ? props.yearFilter.lidar : props.yearFilter.mnt;
+  const activeSelectionCount =
+    props.selectedProduct === "lidar"
+      ? displayedLidarTilesRef.current.length
+      : displayedMntTilesRef.current.length;
+  const hasAoi = Boolean(props.aoi);
 
   function getNormalized(tile: TileFeature) {
     const cached = normalizeCacheRef.current.get(tile);
@@ -1004,10 +1043,10 @@ export default function MapView(props: Props) {
     }
   }
 
-  function fitMapToAoi(map: Map, aoi: AoiFeature | null) {
+  function fitMapToAoi(map: Map, aoi: AoiFeature | null, force = false) {
     if (!aoi) return;
     const aoiKey = JSON.stringify(aoi.geometry);
-    if (lastFittedAoiKeyRef.current === aoiKey) return;
+    if (!force && lastFittedAoiKeyRef.current === aoiKey) return;
     const bounds = getAoiBounds(aoi);
     if (!bounds) return;
     lastFittedAoiKeyRef.current = aoiKey;
@@ -1015,6 +1054,16 @@ export default function MapView(props: Props) {
       padding: { top: 60, right: 60, bottom: 60, left: 60 },
       duration: 700,
       maxZoom: 15,
+    });
+  }
+
+  function resetMapView(map: Map) {
+    lastFittedAoiKeyRef.current = "";
+    map.flyTo({
+      center: INITIAL_RESET_CENTER,
+      zoom: INITIAL_RESET_ZOOM,
+      duration: 850,
+      essential: true,
     });
   }
 
@@ -1396,12 +1445,130 @@ export default function MapView(props: Props) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} className="map" style={{ position: "absolute", inset: 0 }} />
 
-      {/* Sélecteur rétractable des fonds cartographiques */}
+      {/* Bandeau produit + année + état de sélection */}
       <div
         style={{
           position: "absolute",
           top: 12,
-          right: 58,
+          left: 12,
+          zIndex: 31,
+          maxWidth: 420,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            padding: "10px 12px",
+            borderRadius: 14,
+            border: "1px solid #d1d5db",
+            background: "rgba(255,255,255,0.97)",
+            boxShadow: "0 12px 24px rgba(0,0,0,0.10)",
+          }}
+        >
+          <span style={getBadgeStyle("product")}>{props.selectedProduct.toUpperCase()}</span>
+          <span style={getBadgeStyle("year")}>
+            {activeYear === "ALL" ? "Toutes les années" : `Année ${activeYear}`}
+          </span>
+          <span style={getBadgeStyle("selection")}>
+            {activeSelectionCount} tuile{activeSelectionCount > 1 ? "s" : ""}
+          </span>
+        </div>
+
+        {isRefreshing && (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid #d1d5db",
+              background: "rgba(255,255,255,0.96)",
+              boxShadow: "0 8px 18px rgba(0,0,0,0.10)",
+              fontSize: 12,
+              color: "#111827",
+            }}
+          >
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "#2563eb",
+                flex: "0 0 auto",
+              }}
+            />
+            Actualisation de la carte…
+          </div>
+        )}
+      </div>
+
+      {/* Contrôles métier carte */}
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          right: panelInfo ? 384 : 58,
+          zIndex: 32,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          alignItems: "stretch",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            const map = mapRef.current;
+            if (!map || !props.aoi) return;
+            fitMapToAoi(map, props.aoi, true);
+          }}
+          disabled={!props.aoi}
+          title="Ajuster à l’AOI"
+          style={{
+            ...getMapButtonStyle(true),
+            opacity: props.aoi ? 1 : 0.5,
+            cursor: props.aoi ? "pointer" : "not-allowed",
+          }}
+        >
+          Ajuster à l’AOI
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            const map = mapRef.current;
+            if (!map) return;
+            resetMapView(map);
+          }}
+          title="Réinitialiser la vue Québec"
+          style={getMapButtonStyle(false)}
+        >
+          Réinitialiser la vue
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setIsLegendOpen((prev) => !prev)}
+          title={isLegendOpen ? "Masquer la légende" : "Afficher la légende"}
+          style={getMapButtonStyle(false)}
+        >
+          {isLegendOpen ? "Masquer la légende" : "Afficher la légende"}
+        </button>
+      </div>
+
+      {/* Sélecteur rétractable des fonds cartographiques */}
+      <div
+        style={{
+          position: "absolute",
+          top: 136,
+          right: 12,
           zIndex: 32,
           width: isBasemapMenuOpen ? 320 : 40,
           borderRadius: 14,
@@ -1555,36 +1722,90 @@ export default function MapView(props: Props) {
         )}
       </div>
 
-      {/* Loader discret pendant l’actualisation de la carte */}
-      {isRefreshing && (
+      {/* Légende carte */}
+      {isLegendOpen && (
         <div
           style={{
             position: "absolute",
-            top: 12,
             left: 12,
-            zIndex: 30,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid #d1d5db",
+            bottom: 58,
+            zIndex: 20,
+            width: 280,
+            maxWidth: "calc(100% - 24px)",
             background: "rgba(255,255,255,0.96)",
-            boxShadow: "0 8px 18px rgba(0,0,0,0.10)",
-            fontSize: 12,
+            border: "1px solid #d1d5db",
+            borderRadius: 14,
+            boxShadow: "0 10px 24px rgba(0,0,0,0.12)",
+            padding: 12,
             color: "#111827",
           }}
         >
-          <div
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: "#2563eb",
-              flex: "0 0 auto",
-            }}
-          />
-          Actualisation de la carte…
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>Légende</div>
+              <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
+                Lecture rapide de la carte
+              </div>
+            </div>
+            <span style={getBadgeStyle("neutral")}>Zoom {mapZoom.toFixed(1)}</span>
+          </div>
+
+          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span
+                style={{
+                  width: 18,
+                  height: 12,
+                  borderRadius: 4,
+                  border: "2px solid #dc2626",
+                  background: "rgba(220,38,38,0.14)",
+                  flex: "0 0 auto",
+                }}
+              />
+              <div style={{ fontSize: 12 }}>
+                <div style={{ fontWeight: 700 }}>AOI</div>
+                <div style={{ color: "#6b7280" }}>Zone d’étude chargée</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span
+                style={{
+                  width: 18,
+                  height: 12,
+                  borderRadius: 4,
+                  border: props.selectedProduct === "lidar" ? "2px solid #1d4ed8" : "2px solid #15803d",
+                  background: props.selectedProduct === "lidar" ? "rgba(37,99,235,0.22)" : "rgba(22,163,74,0.22)",
+                  flex: "0 0 auto",
+                }}
+              />
+              <div style={{ fontSize: 12 }}>
+                <div style={{ fontWeight: 700 }}>Tuiles visibles</div>
+                <div style={{ color: "#6b7280" }}>
+                  Empreintes du produit actif dans la vue
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span
+                style={{
+                  width: 18,
+                  height: 12,
+                  borderRadius: 4,
+                  border: props.selectedProduct === "lidar" ? "2px solid #16a34a" : "2px solid #d97706",
+                  background: props.selectedProduct === "lidar" ? "rgba(34,197,94,0.28)" : "rgba(245,158,11,0.28)",
+                  flex: "0 0 auto",
+                }}
+              />
+              <div style={{ fontSize: 12 }}>
+                <div style={{ fontWeight: 700 }}>Tuiles sélectionnées</div>
+                <div style={{ color: "#6b7280" }}>
+                  Résultat courant pour export
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1594,7 +1815,7 @@ export default function MapView(props: Props) {
           style={{
             position: "absolute",
             left: 12,
-            bottom: 58,
+            bottom: isLegendOpen ? 238 : 58,
             zIndex: 20,
             maxWidth: 420,
             background: "rgba(255,255,255,0.96)",
@@ -1781,6 +2002,30 @@ export default function MapView(props: Props) {
           </div>
         </div>
       )}
+
+      {/* Pied discret de lecture rapide */}
+      <div
+        style={{
+          position: "absolute",
+          right: 12,
+          bottom: 12,
+          zIndex: 19,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 10px",
+          borderRadius: 10,
+          border: "1px solid #d1d5db",
+          background: "rgba(255,255,255,0.92)",
+          boxShadow: "0 8px 18px rgba(0,0,0,0.08)",
+          fontSize: 12,
+          color: "#374151",
+        }}
+      >
+        <span>{hasAoi ? "AOI active" : "Sans AOI"}</span>
+        <span style={{ color: "#9ca3af" }}>•</span>
+        <span>{currentBasemap.label}</span>
+      </div>
     </div>
   );
 }
