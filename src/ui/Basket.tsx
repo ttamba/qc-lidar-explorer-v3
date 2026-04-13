@@ -72,7 +72,7 @@ export default function Basket({ tiles }: BasketProps) {
           color: "#6b7280",
         }}
       >
-        Aucune tuile retenue pour le moment.
+        Aucune tuile retenue pour le moment. Chargez une zone d’étude pour alimenter automatiquement le panier.
       </div>
     );
   }
@@ -99,6 +99,23 @@ export default function Basket({ tiles }: BasketProps) {
             Affichage des 50 premières tuiles
           </div>
         )}
+      </div>
+
+      <div
+        style={{
+          marginBottom: 10,
+          display: "inline-flex",
+          alignItems: "center",
+          padding: "5px 9px",
+          borderRadius: 999,
+          border: "1px solid #d1fae5",
+          background: "#ecfdf5",
+          color: "#047857",
+          fontSize: 11,
+          fontWeight: 700,
+        }}
+      >
+        Panier prêt pour l’export
       </div>
 
       <div

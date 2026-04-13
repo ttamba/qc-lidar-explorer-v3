@@ -552,10 +552,42 @@ export default function App() {
             QC LiDAR / MNT Explorer
           </div>
           <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.45 }}>
-            Exploration cartographique des couvertures LiDAR et MNT du Québec à partir d’une zone d’étude.
+            Préparation, lecture et export de tuiles LiDAR et MNT du Québec pour une zone d’étude.
           </div>
 
           <StatusCard tone={statusSummary.tone}>{statusSummary.message}</StatusCard>
+
+          <div
+            style={{
+              marginTop: 12,
+              padding: 12,
+              borderRadius: 12,
+              border: "1px solid #dbeafe",
+              background: "#f8fbff",
+            }}
+          >
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "4px 8px",
+                borderRadius: 999,
+                border: "1px solid #bfdbfe",
+                background: "#eff6ff",
+                color: "#1d4ed8",
+                fontSize: 11,
+                fontWeight: 800,
+                marginBottom: 8,
+              }}
+            >
+              Démo client
+            </div>
+
+            <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
+              Parcours recommandé : importer une zone d’étude, vérifier la sélection sur la carte,
+              filtrer au besoin, puis exporter le panier.
+            </div>
+          </div>
 
           <div
             style={{
@@ -565,9 +597,9 @@ export default function App() {
               gap: 8,
             }}
           >
-            <SmallStat label="Produit actif actif" value={selectedProduct.toUpperCase()} />
+            <SmallStat label="Produit actif" value={selectedProduct.toUpperCase()} />
             <SmallStat label="Année active" value={activeYear === "ALL" ? "Toutes" : activeYear} />
-            <SmallStat label="Sélection et export active" value={activeSelectionCount} />
+            <SmallStat label="Sélection active" value={activeSelectionCount} />
             <SmallStat label="Total sélectionné" value={totalSelectionCount} />
           </div>
         </div>
@@ -575,7 +607,7 @@ export default function App() {
         {/* Chargement AOI + gestion de la reprojection assistée */}
         <SectionCard
           title="Zone d’étude"
-          subtitle="Formats pris en charge : GeoJSON, KML, KMZ et Shapefile ZIP."
+          subtitle="Chargez une AOI pour lancer la lecture cartographique et activer la sélection."
         >
           <input
             type="file"
@@ -697,10 +729,73 @@ export default function App() {
           )}
         </SectionCard>
 
+        <SectionCard
+          title="Parcours de démonstration"
+          subtitle="Lecture simple en quatre étapes pour un échange client fluide."
+        >
+          <div style={{ display: "grid", gap: 8 }}>
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: "#f9fafb",
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: "#374151",
+              }}
+            >
+              <strong style={{ color: "#111827" }}>1. Charger</strong> la zone d’étude.
+            </div>
+
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: "#f9fafb",
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: "#374151",
+              }}
+            >
+              <strong style={{ color: "#111827" }}>2. Lire</strong> la couverture visible, les années disponibles et la sélection.
+            </div>
+
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: "#f9fafb",
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: "#374151",
+              }}
+            >
+              <strong style={{ color: "#111827" }}>3. Affiner</strong> au besoin par produit ou par année.
+            </div>
+
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: "#f9fafb",
+                fontSize: 12,
+                lineHeight: 1.45,
+                color: "#374151",
+              }}
+            >
+              <strong style={{ color: "#111827" }}>4. Exporter</strong> le panier final.
+            </div>
+          </div>
+        </SectionCard>
+
         {/* Filtres métier : produit actif et année disponible */}
         <SectionCard
           title="Filtres"
-          subtitle="Le produit actif pilote l’affichage cartographique, la sélection et le filtre annuel."
+          subtitle="Ajustez le produit et l’année pour affiner la lecture métier de la zone analysée."
         >
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontWeight: 700, marginBottom: 8, color: "#111827" }}>Produit actif</div>
@@ -802,7 +897,7 @@ export default function App() {
         {/* Résumé de la sélection et actions d'export */}
         <SectionCard
           title="Sélection et export"
-          subtitle="Les tuiles visibles et retenues sur la carte alimentent directement le panier et l’export."
+          subtitle="Le résultat courant devient immédiatement exploitable pour la préparation du bundle ZIP."
         >
           <div
             style={{
@@ -851,7 +946,7 @@ export default function App() {
         {/* Panier : liste détaillée des tuiles retenues */}
         <SectionCard
           title="Panier"
-          subtitle="Résumé des tuiles retenues pour l’export en cours."
+          subtitle="Inventaire synthétique des tuiles prêtes à être exportées."
         >
           <Basket tiles={selectedTiles} />
         </SectionCard>

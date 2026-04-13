@@ -1504,7 +1504,7 @@ export default function MapView(props: Props) {
                 flex: "0 0 auto",
               }}
             />
-            Mise à jour de la carte…
+            Actualisation cartographique…
           </div>
         )}
       </div>
@@ -1744,7 +1744,7 @@ export default function MapView(props: Props) {
             <div>
               <div style={{ fontWeight: 800, fontSize: 13 }}>Légende</div>
               <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
-                Lecture rapide de la carte
+                Repères visuels pour la démonstration
               </div>
             </div>
             <span style={getBadgeStyle("neutral")}>Zoom {mapZoom.toFixed(1)}</span>
@@ -1782,7 +1782,7 @@ export default function MapView(props: Props) {
               <div style={{ fontSize: 12 }}>
                 <div style={{ fontWeight: 700 }}>Tuiles visibles</div>
                 <div style={{ color: "#6b7280" }}>
-                  Empreintes du produit actif dans la vue
+                  Couverture actuellement lue dans la vue
                 </div>
               </div>
             </div>
@@ -1801,7 +1801,7 @@ export default function MapView(props: Props) {
               <div style={{ fontSize: 12 }}>
                 <div style={{ fontWeight: 700 }}>Tuiles sélectionnées</div>
                 <div style={{ color: "#6b7280" }}>
-                  Résultat courant pour export
+                  Résultat retenu pour le panier et l’export
                 </div>
               </div>
             </div>
@@ -1998,7 +1998,7 @@ export default function MapView(props: Props) {
           </div>
 
           <div style={{ marginTop: 10, color: "#6b7280", fontSize: 12 }}>
-            Astuce : Ctrl/Cmd + clic ouvre directement le lien de la tuile.
+            Astuce : Ctrl/Cmd + clic ouvre directement le lien de la tuile sélectionnée.
           </div>
         </div>
       )}
@@ -2022,7 +2022,7 @@ export default function MapView(props: Props) {
           color: "#374151",
         }}
       >
-        <span>{hasAoi ? "AOI active" : "Sans AOI"}</span>
+        <span>{hasAoi ? "Zone d’étude active" : "Aucune zone d’étude"}</span>
         <span style={{ color: "#9ca3af" }}>•</span>
         <span>{currentBasemap.label}</span>
       </div>
