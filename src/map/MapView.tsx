@@ -28,7 +28,7 @@ import { normalizeTile } from "../utils/normalizeTile";
  * - mise à jour des sources et layers GeoJSON
  * - gestion de la sélection, du hover et du panneau d’information
  * - cache des résultats coûteux pour améliorer la fluidité
- * - gestion des fonds cartographiques et des contrôles de carte
+ * - gestion du fond cartographique et des contrôles de carte
  */
 
 type Dataset = "lidar" | "mnt";
@@ -97,12 +97,10 @@ type BasemapOption = {
   id: string;
   label: string;
   subtitle: string;
-  sourceType: "xyz" | "tms";
-  tiles?: string[];
-  tileSize?: number;
+  sourceType: "xyz";
+  tiles: string[];
+  tileSize: number;
   attribution: string;
-  tmsUrl?: string;
-  minRecommendedZoom: number;
 };
 
 /**
@@ -465,8 +463,7 @@ export default function MapView(props: Props) {
   /**
    * États UX carte :
    * - chargement discret
-   * - message contextuel sur la carte
-   * - menu de fonds cartographiques
+   * - menu de fond cartographique
    */
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBasemapMenuOpen, setIsBasemapMenuOpen] = useState(false);
@@ -497,60 +494,37 @@ export default function MapView(props: Props) {
   }, [panelInfo]);
 
   /**
-   * Catalogue des fonds de carte :
-   * - OSM
-   * - Carte de base publique du gouvernement du Québec
-   * - Imagerie du gouvernement du Québec
+   * Catalogue des fonds de carte.
+   * Ici, OSM uniquement pour une version publique stable.
    */
   const basemapOptions = useMemo<BasemapOption[]>(() => {
-  const customOsm = props.basemaps?.basemaps?.[0];
+    const customOsm = props.basemaps?.basemaps?.[0];
 
-  return [
-    {
-      id: "osm",
-      label: "OpenStreetMap",
-      subtitle: "Fond général",
-      sourceType: "xyz",
-      tiles: customOsm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-      tileSize: customOsm?.tileSize ?? 256,
-      attribution: customOsm?.attribution ?? "© OpenStreetMap contributors",
-      minRecommendedZoom: 0,
-    },
-    {
-      id: "qc-carte-base",
-      label: "Carte de base du Québec",
-      subtitle: "Gouvernement du Québec",
-      sourceType: "tms",
-      tmsUrl:
-        "https://geoegl.msp.gouv.qc.ca/carto/tms/1.0.0/carte_gouv_qc_public@EPSG_3857/{z}/{x}/{-y}.png",
-      tileSize: 256,
-      attribution: "© Gouvernement du Québec",
-      minRecommendedZoom: 0,
-    },
-  ];
-}, [props.basemaps]);
+    return [
+      {
+        id: "osm",
+        label: "OpenStreetMap",
+        subtitle: "Fond général",
+        sourceType: "xyz",
+        tiles: customOsm?.tiles ?? ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: customOsm?.tileSize ?? 256,
+        attribution: customOsm?.attribution ?? "© OpenStreetMap contributors",
+      },
+    ];
+  }, [props.basemaps]);
 
   const currentBasemap = useMemo(() => {
     return basemapOptions.find((item) => item.id === selectedBasemapId) ?? basemapOptions[0];
   }, [basemapOptions, selectedBasemapId]);
 
-  const isBasemapScaleTooSmall = mapZoom < currentBasemap.minRecommendedZoom;
-
   const styleSpec = useMemo<maplibregl.StyleSpecification>(() => {
-    const tiles =
-      currentBasemap.sourceType === "xyz"
-        ? currentBasemap.tiles ?? []
-        : [currentBasemap.tmsUrl ?? ""];
-
-    const tileSize = currentBasemap.tileSize ?? 256;
-
     return {
       version: 8,
       sources: {
         basemap: {
           type: "raster",
-          tiles,
-          tileSize,
+          tiles: currentBasemap.tiles,
+          tileSize: currentBasemap.tileSize,
           attribution: currentBasemap.attribution,
         },
       },
@@ -1097,7 +1071,6 @@ export default function MapView(props: Props) {
         setPanelInfo(null);
         lastViewStateRef.current = { bboxKey: "", activeDataset: "" };
         lastRefreshKeyRef.current = "";
-       
         return;
       }
 
@@ -1193,11 +1166,10 @@ export default function MapView(props: Props) {
         setSelectedSourceData(map, SRC_MNT_SELECTED, []);
         onSelectionChangeRef.current([]);
       }
-           
+
       lastRefreshKeyRef.current = refreshKey;
     } catch (error) {
       console.error("Erreur dans refreshTiles :", error);
-    
     } finally {
       if (uiSeq === refreshUiSeqRef.current) {
         setIsRefreshing(false);
@@ -1374,11 +1346,11 @@ export default function MapView(props: Props) {
     clearAoiDerivedCaches();
 
     if (!props.aoi) {
-	lastFittedAoiKeyRef.current = "";
-	clearSelectionImmediately(map);
-	scheduleRefresh(map, { delay: 0, reloadData: false, reason: "aoi-cleared" });
-	return;
-	}
+      lastFittedAoiKeyRef.current = "";
+      clearSelectionImmediately(map);
+      scheduleRefresh(map, { delay: 0, reloadData: false, reason: "aoi-cleared" });
+      return;
+    }
 
     const aoiKey = buildAoiKey(props.aoi);
     const hasMovedToNewAoi = lastFittedAoiKeyRef.current !== aoiKey;
@@ -1404,9 +1376,9 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
-	clearAoiDerivedCaches();
-	clearSelectionImmediately(map);
-	scheduleRefresh(map, { delay: 0, reloadData: true, reason: "selected-product-change" });
+    clearAoiDerivedCaches();
+    clearSelectionImmediately(map);
+    scheduleRefresh(map, { delay: 0, reloadData: true, reason: "selected-product-change" });
   }, [props.selectedProduct]);
 
   /**
@@ -1417,7 +1389,7 @@ export default function MapView(props: Props) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     lastRefreshKeyRef.current = "";
-	scheduleRefresh(map, { delay: 0, reloadData: false, reason: "year-filter-change" });
+    scheduleRefresh(map, { delay: 0, reloadData: false, reason: "year-filter-change" });
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
   return (
@@ -1454,7 +1426,7 @@ export default function MapView(props: Props) {
                 Fonds cartographiques
               </div>
               <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
-                OSM + services du gouvernement du Québec
+                OpenStreetMap
               </div>
             </div>
           )}
@@ -1542,26 +1514,6 @@ export default function MapView(props: Props) {
               </div>
             </div>
 
-            {isBasemapScaleTooSmall && currentBasemap.id !== "osm" && (
-              <div
-                style={{
-                  marginBottom: 10,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #fcd34d",
-                  background: "#fffbeb",
-                  color: "#92400e",
-                  fontSize: 12,
-                  lineHeight: 1.45,
-                }}
-              >
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Échelle non recommandée</div>
-                <div>
-                  Ce fond est mieux adapté à partir du zoom <strong>{currentBasemap.minRecommendedZoom}</strong>.
-                </div>
-              </div>
-            )}
-
             <div style={{ display: "grid", gap: 10 }}>
               {basemapOptions.map((option) => {
                 const isActive = option.id === currentBasemap.id;
@@ -1635,7 +1587,7 @@ export default function MapView(props: Props) {
           Actualisation de la carte…
         </div>
       )}
-      
+
       {/* Indication utilisateur : zoom insuffisant pour le dataset actif */}
       {(showLidarZoomHint || showMntZoomHint) && (
         <div
