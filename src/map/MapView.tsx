@@ -158,11 +158,9 @@ const EMPTY_HOVER_FC: HoverFC = {
 const MIN_ZOOM_FOR_LIDAR_LOAD = 10;
 const MIN_ZOOM_FOR_MNT_LOAD = 9;
 const QUEBEC_BOUNDS: LngLatBoundsLike = [
-  [-79.8, 44.5],
-  [-57.0, 62.2],
+  [-79.9, 44.7],
+  [-57.1, 62.7],
 ];
-const INITIAL_RESET_CENTER: [number, number] = [-68.4, 53.35];
-const INITIAL_RESET_ZOOM = 5.4;
 
 /**
  * Throttle basé sur requestAnimationFrame
@@ -1059,11 +1057,10 @@ export default function MapView(props: Props) {
 
   function resetMapView(map: Map) {
     lastFittedAoiKeyRef.current = "";
-    map.flyTo({
-      center: INITIAL_RESET_CENTER,
-      zoom: INITIAL_RESET_ZOOM,
+    map.fitBounds(QUEBEC_BOUNDS, {
+      padding: { top: 36, right: 36, bottom: 36, left: 36 },
       duration: 850,
-      essential: true,
+      maxZoom: 6.2,
     });
   }
 
@@ -1273,7 +1270,7 @@ export default function MapView(props: Props) {
       container: containerRef.current,
       style: styleSpec,
       bounds: QUEBEC_BOUNDS,
-      fitBoundsOptions: { padding: 24 },
+      fitBoundsOptions: { padding: { top: 36, right: 36, bottom: 36, left: 36 } },
       maxBounds: [[-82, 43.5], [-55, 63.5]],
     });
 
@@ -1455,7 +1452,7 @@ export default function MapView(props: Props) {
           maxWidth: 420,
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: 10,
         }}
       >
         <div
@@ -1465,7 +1462,7 @@ export default function MapView(props: Props) {
             gap: 8,
             flexWrap: "wrap",
             padding: "10px 12px",
-            borderRadius: 14,
+            borderRadius: 16,
             border: "1px solid #d1d5db",
             background: "rgba(255,255,255,0.97)",
             boxShadow: "0 12px 24px rgba(0,0,0,0.10)",
@@ -1509,72 +1506,18 @@ export default function MapView(props: Props) {
         )}
       </div>
 
-      {/* Contrôles métier carte */}
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          right: panelInfo ? 384 : 58,
-          zIndex: 32,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-          alignItems: "stretch",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            const map = mapRef.current;
-            if (!map || !props.aoi) return;
-            fitMapToAoi(map, props.aoi, true);
-          }}
-          disabled={!props.aoi}
-          title="Ajuster à l’AOI"
-          style={{
-            ...getMapButtonStyle(true),
-            opacity: props.aoi ? 1 : 0.5,
-            cursor: props.aoi ? "pointer" : "not-allowed",
-          }}
-        >
-          Ajuster à l’AOI
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            const map = mapRef.current;
-            if (!map) return;
-            resetMapView(map);
-          }}
-          title="Réinitialiser la vue Québec"
-          style={getMapButtonStyle(false)}
-        >
-          Réinitialiser la vue
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setIsLegendOpen((prev) => !prev)}
-          title={isLegendOpen ? "Masquer la légende" : "Afficher la légende"}
-          style={getMapButtonStyle(false)}
-        >
-          {isLegendOpen ? "Masquer la légende" : "Afficher la légende"}
-        </button>
-      </div>
-
       {/* Sélecteur rétractable des fonds cartographiques */}
       <div
         style={{
           position: "absolute",
-          top: 136,
-          right: 12,
+          top: 12,
+          right: 58,
           zIndex: 32,
-          width: isBasemapMenuOpen ? 320 : 40,
+          width: isBasemapMenuOpen ? 332 : 40,
           borderRadius: 14,
           border: "1px solid #d1d5db",
           background: "rgba(255,255,255,0.97)",
-          boxShadow: "0 12px 26px rgba(0,0,0,0.12)",
+          boxShadow: "0 16px 32px rgba(0,0,0,0.12)",
           overflow: "hidden",
         }}
       >
@@ -1583,7 +1526,7 @@ export default function MapView(props: Props) {
             display: "flex",
             justifyContent: isBasemapMenuOpen ? "space-between" : "center",
             alignItems: "center",
-            padding: isBasemapMenuOpen ? "10px 12px" : "6px",
+            padding: isBasemapMenuOpen ? "12px 12px" : "6px",
             borderBottom: isBasemapMenuOpen ? "1px solid #e5e7eb" : "none",
           }}
         >
@@ -1662,12 +1605,11 @@ export default function MapView(props: Props) {
         </div>
 
         {isBasemapMenuOpen && (
-          <div style={{ padding: 12 }}>
+          <div style={{ padding: 12, display: "grid", gap: 10 }}>
             <div
               style={{
-                marginBottom: 10,
-                padding: 10,
-                borderRadius: 12,
+                padding: 11,
+                borderRadius: 14,
                 background: "#f9fafb",
                 border: "1px solid #e5e7eb",
               }}
@@ -1678,6 +1620,71 @@ export default function MapView(props: Props) {
               <div style={{ fontWeight: 700, color: "#111827" }}>{currentBasemap.label}</div>
               <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
                 {currentBasemap.subtitle}
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: 11,
+                borderRadius: 14,
+                background: "#ffffff",
+                border: "1px solid #e5e7eb",
+              }}
+            >
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>
+                Contrôles de vue
+              </div>
+
+              <div style={{ display: "grid", gap: 9 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const map = mapRef.current;
+                    if (!map || !props.aoi) return;
+                    fitMapToAoi(map, props.aoi, true);
+                  }}
+                  disabled={!props.aoi}
+                  title="Ajuster à l’AOI"
+                  style={{
+                    ...getMapButtonStyle(true),
+                    opacity: props.aoi ? 1 : 0.5,
+                    cursor: props.aoi ? "pointer" : "not-allowed",
+                    width: "100%",
+                    justifyContent: "center",
+                  }}
+                >
+                  Ajuster à l’AOI
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const map = mapRef.current;
+                    if (!map) return;
+                    resetMapView(map);
+                  }}
+                  title="Réinitialiser la vue Québec"
+                  style={{
+                    ...getMapButtonStyle(false),
+                    width: "100%",
+                    justifyContent: "center",
+                  }}
+                >
+                  Réinitialiser la vue
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsLegendOpen((prev) => !prev)}
+                  title={isLegendOpen ? "Masquer la légende" : "Afficher la légende"}
+                  style={{
+                    ...getMapButtonStyle(false),
+                    width: "100%",
+                    justifyContent: "center",
+                  }}
+                >
+                  {isLegendOpen ? "Masquer la légende" : "Afficher la légende"}
+                </button>
               </div>
             </div>
 
@@ -1820,9 +1827,9 @@ export default function MapView(props: Props) {
             maxWidth: 420,
             background: "rgba(255,255,255,0.96)",
             border: "1px solid #d1d5db",
-            borderRadius: 10,
-            boxShadow: "0 10px 24px rgba(0,0,0,0.12)",
-            padding: "10px 12px",
+            borderRadius: 12,
+            boxShadow: "0 12px 26px rgba(0,0,0,0.12)",
+            padding: "11px 12px",
             fontSize: 13,
             lineHeight: 1.45,
             color: "#111827",
@@ -1849,9 +1856,9 @@ export default function MapView(props: Props) {
             maxWidth: "calc(100% - 24px)",
             background: "rgba(255,255,255,0.97)",
             border: "1px solid #d1d5db",
-            borderRadius: 16,
-            boxShadow: "0 16px 32px rgba(0,0,0,0.16)",
-            padding: 14,
+            borderRadius: 18,
+            boxShadow: "0 18px 36px rgba(0,0,0,0.16)",
+            padding: 15,
             fontSize: 13,
             lineHeight: 1.45,
           }}
