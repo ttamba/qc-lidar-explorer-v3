@@ -1504,7 +1504,7 @@ export default function MapView(props: Props) {
                 flex: "0 0 auto",
               }}
             />
-            Actualisation de la carte…
+            Mise à jour de la carte…
           </div>
         )}
       </div>
@@ -1590,7 +1590,7 @@ export default function MapView(props: Props) {
           {isBasemapMenuOpen && (
             <div>
               <div style={{ fontWeight: 800, fontSize: 13, color: "#111827" }}>
-                Fonds cartographiques
+                Fond de carte
               </div>
               <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
                 OpenStreetMap
@@ -1613,8 +1613,8 @@ export default function MapView(props: Props) {
               justifyContent: "center",
               padding: 0,
             }}
-            title={isBasemapMenuOpen ? "Fermer le sélecteur de fonds" : "Ouvrir le sélecteur de fonds"}
-            aria-label={isBasemapMenuOpen ? "Fermer le sélecteur de fonds" : "Ouvrir le sélecteur de fonds"}
+            title={isBasemapMenuOpen ? "Fermer le panneau du fond de carte" : "Ouvrir le panneau du fond de carte"}
+            aria-label={isBasemapMenuOpen ? "Fermer le panneau du fond de carte" : "Ouvrir le panneau du fond de carte"}
           >
             <span
               style={{
@@ -1828,9 +1828,9 @@ export default function MapView(props: Props) {
             color: "#111827",
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Zoom insuffisant pour certaines couches</div>
-          {showLidarZoomHint && <div>LiDAR disponible à partir du zoom <strong>{MIN_ZOOM_FOR_LIDAR_LOAD}</strong>.</div>}
-          {showMntZoomHint && <div>MNT disponible à partir du zoom <strong>{MIN_ZOOM_FOR_MNT_LOAD}</strong>.</div>}
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Niveau de zoom insuffisant</div>
+          {showLidarZoomHint && <div>Les tuiles LiDAR deviennent disponibles à partir du zoom <strong>{MIN_ZOOM_FOR_LIDAR_LOAD}</strong>.</div>}
+          {showMntZoomHint && <div>Les tuiles MNT deviennent disponibles à partir du zoom <strong>{MIN_ZOOM_FOR_MNT_LOAD}</strong>.</div>}
         </div>
       )}
 
@@ -1977,7 +1977,7 @@ export default function MapView(props: Props) {
                 fontWeight: 700,
               }}
             >
-              Télécharger
+              Ouvrir le lien
             </button>
 
             <button
@@ -1998,7 +1998,7 @@ export default function MapView(props: Props) {
           </div>
 
           <div style={{ marginTop: 10, color: "#6b7280", fontSize: 12 }}>
-            Astuce : Ctrl/Cmd + clic ouvre directement le téléchargement.
+            Astuce : Ctrl/Cmd + clic ouvre directement le lien de la tuile.
           </div>
         </div>
       )}

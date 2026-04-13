@@ -72,7 +72,7 @@ export default function Basket({ tiles }: BasketProps) {
           color: "#6b7280",
         }}
       >
-        Aucune tuile sélectionnée pour le moment.
+        Aucune tuile retenue pour le moment.
       </div>
     );
   }
@@ -96,7 +96,7 @@ export default function Basket({ tiles }: BasketProps) {
 
         {tiles.length > 50 && (
           <div style={{ fontSize: 11, color: "#6b7280" }}>
-            Affichage des 50 premières
+            Affichage des 50 premières tuiles
           </div>
         )}
       </div>
