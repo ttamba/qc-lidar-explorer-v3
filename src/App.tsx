@@ -11,7 +11,11 @@ import {
   reprojectGeoJsonToWgs84,
   type SupportedSourceCrsCode,
 } from "./aoi/reprojectAoi";
-import { exportBundle, type ExportProgress } from "./export/exportBundle";
+import {
+  exportBundle,
+  type ExportMode,
+  type ExportProgress,
+} from "./export/exportBundle";
 
 type Dataset = "lidar" | "mnt";
 type AvailableYears = { lidar: string[]; mnt: string[] };
@@ -28,6 +32,9 @@ type ExportUiState = {
   message?: string;
   downloadedCount: number;
   failedCount: number;
+  elapsedMs?: number;
+  etaMs?: number;
+  mode?: ExportMode;
 };
 
 const INITIAL_EXPORT_UI_STATE: ExportUiState = {
@@ -40,31 +47,37 @@ const INITIAL_EXPORT_UI_STATE: ExportUiState = {
   message: undefined,
   downloadedCount: 0,
   failedCount: 0,
+  elapsedMs: 0,
+  etaMs: undefined,
+  mode: undefined,
 };
 
-/**
- * Déduit le produit d'une tuile pour compter proprement LiDAR vs MNT.
- */
 function getTileProduct(tile: TileFeature): Dataset | "" {
   const props = (tile?.properties ?? {}) as Record<string, unknown>;
   const raw =
     props.normalized_product ?? props.product ?? props.PRODUIT ?? props.type_produit ?? "";
   const value = String(raw).toLowerCase();
+
   if (value === "lidar") return "lidar";
   if (value === "mnt") return "mnt";
   return "";
 }
 
-/**
- * Détecte si l'erreur de validation indique un problème de projection.
- */
 function isWgs84ValidationError(message: string): boolean {
   return /WGS84|EPSG:4326/i.test(message);
 }
 
-/**
- * Style visuel unifié pour les cartes de statut.
- */
+function formatDuration(ms?: number) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "—";
+
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes} min ${seconds}s`;
+}
+
 function getStatusCardStyle(tone: StatusTone): React.CSSProperties {
   switch (tone) {
     case "success":
@@ -95,9 +108,6 @@ function getStatusCardStyle(tone: StatusTone): React.CSSProperties {
   }
 }
 
-/**
- * Conteneur visuel générique pour les grandes sections du panneau latéral.
- */
 function SectionCard(props: {
   title: string;
   children: React.ReactNode;
@@ -127,9 +137,6 @@ function SectionCard(props: {
   );
 }
 
-/**
- * Carte de message utilisateur : info, succès, alerte ou erreur.
- */
 function StatusCard(props: {
   tone: StatusTone;
   children: React.ReactNode;
@@ -152,9 +159,6 @@ function StatusCard(props: {
   );
 }
 
-/**
- * Petit indicateur chiffré pour afficher les stats principales.
- */
 function SmallStat(props: {
   label: string;
   value: React.ReactNode;
@@ -174,9 +178,6 @@ function SmallStat(props: {
   );
 }
 
-/**
- * Bouton standardisé pour harmoniser les actions du panneau.
- */
 function ActionButton(props: {
   onClick?: () => void;
   disabled?: boolean;
@@ -253,6 +254,13 @@ function ExportProgressCard(props: {
       : state.phase === "done"
         ? "#16a34a"
         : "#2563eb";
+
+  const modeLabel =
+    state.mode === "inline-zip"
+      ? "ZIP complet avec tuiles"
+      : state.mode === "inventory-only"
+        ? "ZIP d’inventaire + téléchargements séparés"
+        : "—";
 
   return (
     <div
@@ -334,6 +342,23 @@ function ExportProgressCard(props: {
           <strong>{state.failedCount}</strong>
         </div>
 
+        <div>
+          Durée écoulée : <strong>{formatDuration(state.elapsedMs)}</strong>
+        </div>
+
+        {state.phase === "download" &&
+          state.etaMs !== undefined &&
+          state.completed > 0 &&
+          state.completed < state.total && (
+            <div>
+              Temps restant estimé : <strong>{formatDuration(state.etaMs)}</strong>
+            </div>
+          )}
+
+        <div>
+          Mode : <strong>{modeLabel}</strong>
+        </div>
+
         {state.currentFile && (
           <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             Fichier en cours : <strong title={state.currentFile}>{state.currentFile}</strong>
@@ -355,22 +380,17 @@ function toExportUiState(progress: ExportProgress): ExportUiState {
     message: progress.message,
     downloadedCount: progress.downloadedCount ?? 0,
     failedCount: progress.failedCount ?? 0,
+    elapsedMs: progress.elapsedMs ?? 0,
+    etaMs: progress.etaMs,
+    mode: progress.mode,
   };
 }
 
 export default function App() {
-  /**
-   * États métier principaux :
-   * AOI, sélection cartographique, filtres et années disponibles.
-   */
   const [selectedTiles, setSelectedTiles] = useState<TileFeature[]>([]);
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
 
-  /**
-   * États de reprojection assistée :
-   * on stocke temporairement l'AOI brute lorsqu'un SCR source doit être choisi.
-   */
   const [pendingAoiRaw, setPendingAoiRaw] = useState<any | null>(null);
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
   const [selectedSourceCrs, setSelectedSourceCrs] =
@@ -379,10 +399,6 @@ export default function App() {
     useState<SupportedSourceCrsCode | null>(null);
   const [isReprojectingAoi, setIsReprojectingAoi] = useState(false);
 
-  /**
-   * États d'interface :
-   * produit actif, année active, années disponibles et états de travail.
-   */
   const [selectedProduct, setSelectedProduct] = useState<Dataset>("lidar");
   const [yearFilter, setYearFilter] = useState<YearFilter>({
     lidar: "ALL",
@@ -397,17 +413,11 @@ export default function App() {
   const [infoMessage, setInfoMessage] = useState<string>("");
   const [exportUi, setExportUi] = useState<ExportUiState>(INITIAL_EXPORT_UI_STATE);
 
-  /**
-   * Valeurs dérivées du produit actif pour simplifier le rendu UI.
-   */
   const activeYears =
     selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
   const activeYear =
     selectedProduct === "lidar" ? yearFilter.lidar : yearFilter.mnt;
 
-  /**
-   * Compteurs de sélection pour afficher un résumé clair à l'utilisateur.
-   */
   const activeSelectionCount = useMemo(
     () => selectedTiles.filter((tile) => getTileProduct(tile) === selectedProduct).length,
     [selectedProduct, selectedTiles]
@@ -431,10 +441,6 @@ export default function App() {
   const canClearAoi = (hasAoi || hasPendingReprojection || !!aoiError) && !isBusy;
   const canClearSelection = totalSelectionCount > 0 && !isBusy;
 
-  /**
-   * Résumé d'état global affiché en haut du panneau :
-   * activité en cours, erreur, succès ou état d'attente.
-   */
   const statusSummary = useMemo(() => {
     if (loadingAoi) {
       return {
@@ -503,10 +509,6 @@ export default function App() {
     loadingAoi,
   ]);
 
-  /**
-   * Importe un fichier AOI, tente une validation directe,
-   * puis bascule en mode reprojection assistée si nécessaire.
-   */
   async function handleAoiFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -568,10 +570,6 @@ export default function App() {
     }
   }
 
-  /**
-   * Reprojette l'AOI en attente vers WGS84,
-   * puis valide et charge le résultat final.
-   */
   async function handleReprojectAndLoadAoi() {
     if (!pendingAoiRaw || isReprojectingAoi) return;
 
@@ -606,9 +604,6 @@ export default function App() {
     }
   }
 
-  /**
-   * Réinitialise complètement le contexte AOI et la sélection.
-   */
   function clearAoi() {
     setAoi(null);
     setSelectedTiles([]);
@@ -621,28 +616,18 @@ export default function App() {
     setExportUi(INITIAL_EXPORT_UI_STATE);
   }
 
-  /**
-   * Vide uniquement la sélection cartographique courante.
-   */
   function clearSelection() {
     setSelectedTiles([]);
     setInfoMessage("Sélection et export vidés.");
     setExportUi(INITIAL_EXPORT_UI_STATE);
   }
 
-  /**
-   * Change le produit actif et remet la sélection à zéro
-   * pour éviter les incohérences entre LiDAR et MNT.
-   */
   function handleSelectedProductChange(product: Dataset) {
     setSelectedProduct(product);
     setSelectedTiles([]);
     setInfoMessage("");
   }
 
-  /**
-   * Applique un filtre annuel sur le produit actif.
-   */
   function handleYearChange(value: string) {
     setYearFilter((prev) => ({
       ...prev,
@@ -652,10 +637,6 @@ export default function App() {
     setInfoMessage("");
   }
 
-  /**
-   * Met à jour les années disponibles remontées par la carte
-   * et corrige le filtre courant si l'année n'existe plus.
-   */
   function handleYearsChange(years: AvailableYears) {
     setAvailableYears(years);
 
@@ -671,9 +652,6 @@ export default function App() {
     }
   }
 
-  /**
-   * Exporte le bundle ZIP à partir de l'AOI et des tuiles sélectionnées.
-   */
   async function handleExport() {
     if (!canExport) return;
 
@@ -691,6 +669,9 @@ export default function App() {
         message: "Préparation de l’export…",
         downloadedCount: 0,
         failedCount: 0,
+        elapsedMs: 0,
+        etaMs: undefined,
+        mode: undefined,
       });
 
       await exportBundle({
@@ -706,17 +687,12 @@ export default function App() {
       const message =
         err instanceof Error ? err.message : "Erreur lors de la création du bundle d’export.";
       setAoiError(message);
-      setExportUi({
+      setExportUi((prev) => ({
+        ...prev,
         isOpen: true,
         phase: "error",
-        percent: exportUi.percent,
-        completed: exportUi.completed,
-        total: exportUi.total,
-        currentFile: exportUi.currentFile,
         message,
-        downloadedCount: exportUi.downloadedCount,
-        failedCount: exportUi.failedCount,
-      });
+      }));
     } finally {
       setIsExporting(false);
     }
