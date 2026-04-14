@@ -3,7 +3,76 @@ import { saveAs } from "file-saver";
 import type { AoiFeature, TileFeature } from "../types";
 import { normalizeTile } from "../utils/normalizeTile";
 
-const MAX_INLINE_DOWNLOADS = 4; // seuil prudent pour zipper dans le navigateur
+const MAX_INLINE_DOWNLOADS = 6;
+const DEFAULT_CONCURRENCY =
+  typeof navigator !== "undefined" && navigator.hardwareConcurrency
+    ? Math.max(2, Math.min(6, navigator.hardwareConcurrency))
+    : 4;
+
+export type ExportProgress =
+  | {
+      phase: "idle";
+      percent: 0;
+      completed: 0;
+      total: number;
+      currentFile?: string;
+      message?: string;
+      downloadedCount?: number;
+      failedCount?: number;
+    }
+  | {
+      phase: "download";
+      percent: number;
+      completed: number;
+      total: number;
+      currentFile?: string;
+      message?: string;
+      downloadedCount?: number;
+      failedCount?: number;
+    }
+  | {
+      phase: "zip";
+      percent: number;
+      completed: number;
+      total: number;
+      currentFile?: string;
+      message?: string;
+      downloadedCount?: number;
+      failedCount?: number;
+    }
+  | {
+      phase: "done";
+      percent: 100;
+      completed: number;
+      total: number;
+      currentFile?: string;
+      message?: string;
+      downloadedCount?: number;
+      failedCount?: number;
+    }
+  | {
+      phase: "error";
+      percent: number;
+      completed: number;
+      total: number;
+      currentFile?: string;
+      message: string;
+      downloadedCount?: number;
+      failedCount?: number;
+    };
+
+type DownloadFailure = {
+  product: string;
+  tile_id: string;
+  name: string;
+  url: string;
+  error: string;
+};
+
+type DownloadedFile = {
+  fileName: string;
+  blob: Blob;
+};
 
 function toCsv(tiles: TileFeature[]) {
   const header = ["product", "tile_id", "name", "url", "year", "provider"];
@@ -29,15 +98,7 @@ function toCsv(tiles: TileFeature[]) {
   return [header, ...rows].map((r) => r.map(esc).join(",")).join("\n");
 }
 
-function failuresToCsv(
-  failures: Array<{
-    product: string;
-    tile_id: string;
-    name: string;
-    url: string;
-    error: string;
-  }>
-) {
+function failuresToCsv(failures: DownloadFailure[]) {
   const header = ["product", "tile_id", "name", "url", "error"];
 
   const rows = failures.map((f) => [
@@ -64,7 +125,9 @@ function readmeQgisMd(
 ) {
   const modeText =
     mode === "inline-zip"
-      ? `Mode utilisé: ZIP avec tuiles téléchargées directement\n- Tuiles incluses dans le ZIP: ${downloadedCount}\n- Échecs: ${failedCount}`
+      ? `Mode utilisé: ZIP avec tuiles téléchargées directement
+- Tuiles incluses dans le ZIP: ${downloadedCount}
+- Échecs: ${failedCount}`
       : `Mode utilisé: ZIP d'inventaire + ouverture des URLs dans de nouveaux onglets`;
 
   return `# Export QC LiDAR/MNT — Sélection de tuiles
@@ -121,18 +184,73 @@ async function fetchAsBlob(url: string) {
   return await response.blob();
 }
 
+async function downloadTilesWithConcurrency(
+  tiles: TileFeature[],
+  concurrency: number,
+  onProgress?: (progress: ExportProgress) => void
+) {
+  const results: DownloadedFile[] = [];
+  const failures: DownloadFailure[] = [];
+
+  let index = 0;
+  let completed = 0;
+
+  async function worker() {
+    while (true) {
+      const currentIndex = index++;
+      if (currentIndex >= tiles.length) break;
+
+      const tile = normalizeTile(tiles[currentIndex]);
+
+      try {
+        if (!tile.url) {
+          throw new Error("URL absente");
+        }
+
+        const blob = await fetchAsBlob(tile.url);
+        const ext = getExtensionFromUrl(tile.url);
+        const fileName = sanitizeFileName(`${tile.name}.${ext}`);
+
+        results.push({ fileName, blob });
+      } catch (err: unknown) {
+        failures.push({
+          product: tile.product,
+          tile_id: tile.id,
+          name: tile.name,
+          url: tile.url ?? "",
+          error: err instanceof Error ? err.message : "Erreur inconnue",
+        });
+      }
+
+      completed += 1;
+
+      onProgress?.({
+        phase: "download",
+        completed,
+        total: tiles.length,
+        percent: Math.round((completed / tiles.length) * 90),
+        currentFile: tile.name,
+        message: "Téléchargement des tuiles en cours…",
+        downloadedCount: results.length,
+        failedCount: failures.length,
+      });
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, tiles.length)) }, () => worker())
+  );
+
+  return { results, failures };
+}
+
 async function buildInventoryZip(params: {
   aoi: AoiFeature;
   tiles: TileFeature[];
   mode: "inline-zip" | "inventory-only";
-  downloadedFiles?: Array<{ fileName: string; blob: Blob }>;
-  failures?: Array<{
-    product: string;
-    tile_id: string;
-    name: string;
-    url: string;
-    error: string;
-  }>;
+  downloadedFiles?: DownloadedFile[];
+  failures?: DownloadFailure[];
+  onZipProgress?: (percent: number) => void;
 }) {
   const {
     aoi,
@@ -140,6 +258,7 @@ async function buildInventoryZip(params: {
     mode,
     downloadedFiles = [],
     failures = [],
+    onZipProgress,
   } = params;
 
   const zip = new JSZip();
@@ -172,73 +291,122 @@ async function buildInventoryZip(params: {
     readmeQgisMd(tiles.length, mode, downloadedFiles.length, failures.length)
   );
 
-  return await zip.generateAsync({ type: "blob" });
+  return await zip.generateAsync(
+    { type: "blob" },
+    (metadata) => {
+      onZipProgress?.(metadata.percent);
+    }
+  );
 }
 
-async function exportInlineZip(aoi: AoiFeature, tiles: TileFeature[]) {
-  const failures: Array<{
-    product: string;
-    tile_id: string;
-    name: string;
-    url: string;
-    error: string;
-  }> = [];
+async function exportInlineZip(
+  aoi: AoiFeature,
+  tiles: TileFeature[],
+  onProgress?: (progress: ExportProgress) => void
+) {
+  onProgress?.({
+    phase: "download",
+    percent: 0,
+    completed: 0,
+    total: tiles.length,
+    currentFile: undefined,
+    message: "Préparation du téléchargement…",
+    downloadedCount: 0,
+    failedCount: 0,
+  });
 
-  const downloadedFiles: Array<{ fileName: string; blob: Blob }> = [];
+  const { results, failures } = await downloadTilesWithConcurrency(
+    tiles,
+    DEFAULT_CONCURRENCY,
+    onProgress
+  );
 
-  for (const tile of tiles) {
-    const t = normalizeTile(tile);
-
-    if (!t.url) {
-      failures.push({
-        product: t.product,
-        tile_id: t.id,
-        name: t.name,
-        url: "",
-        error: "URL de téléchargement absente",
-      });
-      continue;
-    }
-
-    try {
-      const blob = await fetchAsBlob(t.url);
-      const ext = getExtensionFromUrl(t.url);
-      const fileName = sanitizeFileName(`${t.name}.${ext}`);
-      downloadedFiles.push({ fileName, blob });
-    } catch (err: any) {
-      failures.push({
-        product: t.product,
-        tile_id: t.id,
-        name: t.name,
-        url: t.url,
-        error: err?.message ?? "Erreur inconnue",
-      });
-    }
-  }
+  onProgress?.({
+    phase: "zip",
+    percent: 92,
+    completed: tiles.length,
+    total: tiles.length,
+    currentFile: undefined,
+    message: "Création du bundle ZIP…",
+    downloadedCount: results.length,
+    failedCount: failures.length,
+  });
 
   const blob = await buildInventoryZip({
     aoi,
     tiles,
     mode: "inline-zip",
-    downloadedFiles,
+    downloadedFiles: results,
     failures,
+    onZipProgress: (zipPercent) => {
+      const percent = 92 + Math.round((zipPercent / 100) * 8);
+
+      onProgress?.({
+        phase: "zip",
+        percent: Math.min(99, percent),
+        completed: tiles.length,
+        total: tiles.length,
+        currentFile: undefined,
+        message: "Compression du ZIP en cours…",
+        downloadedCount: results.length,
+        failedCount: failures.length,
+      });
+    },
   });
 
   saveAs(blob, `qc_lidar_mnt_data_${timestampString()}.zip`);
 
-  if (failures.length > 0) {
-    alert(
-      `${downloadedFiles.length} tuile(s) incluse(s) dans le ZIP, ${failures.length} en échec.\n` +
-        `Consulte failed_downloads.csv dans le ZIP.`
-    );
-  }
+  const doneMessage =
+    failures.length > 0
+      ? `Export terminé. ${results.length} tuile(s) incluse(s), ${failures.length} en échec. Consultez failed_downloads.csv dans le ZIP.`
+      : `Export terminé. ${results.length} tuile(s) incluse(s) dans le ZIP.`;
+
+  onProgress?.({
+    phase: "done",
+    percent: 100,
+    completed: tiles.length,
+    total: tiles.length,
+    currentFile: undefined,
+    message: doneMessage,
+    downloadedCount: results.length,
+    failedCount: failures.length,
+  });
 }
 
-async function exportInventoryOnly(aoi: AoiFeature, tiles: TileFeature[]) {
+async function exportInventoryOnly(
+  aoi: AoiFeature,
+  tiles: TileFeature[],
+  onProgress?: (progress: ExportProgress) => void
+) {
+  onProgress?.({
+    phase: "zip",
+    percent: 15,
+    completed: 0,
+    total: tiles.length,
+    currentFile: undefined,
+    message: "Création du ZIP d’inventaire…",
+    downloadedCount: 0,
+    failedCount: 0,
+  });
+
   const blob = await buildInventoryZip({
     aoi,
     tiles,
     mode: "inventory-only",
+    onZipProgress: (zipPercent) => {
+      const percent = 15 + Math.round((zipPercent / 100) * 70);
+
+      onProgress?.({
+        phase: "zip",
+        percent: Math.min(90, percent),
+        completed: 0,
+        total: tiles.length,
+        currentFile: undefined,
+        message: "Préparation de l’inventaire d’export…",
+        downloadedCount: 0,
+        failedCount: 0,
+      });
+    },
   });
 
   saveAs(blob, `qc_lidar_mnt_selection_${timestampString()}.zip`);
@@ -247,7 +415,28 @@ async function exportInventoryOnly(aoi: AoiFeature, tiles: TileFeature[]) {
     .map((tile) => normalizeTile(tile).url)
     .filter((url): url is string => typeof url === "string" && url.length > 0);
 
+  onProgress?.({
+    phase: "zip",
+    percent: 95,
+    completed: validUrls.length,
+    total: tiles.length,
+    currentFile: undefined,
+    message: "Ouverture des liens de téléchargement…",
+    downloadedCount: 0,
+    failedCount: 0,
+  });
+
   if (validUrls.length === 0) {
+    onProgress?.({
+      phase: "error",
+      percent: 100,
+      completed: 0,
+      total: tiles.length,
+      currentFile: undefined,
+      message: "Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.",
+      downloadedCount: 0,
+      failedCount: 0,
+    });
     alert("Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.");
     return;
   }
@@ -261,13 +450,39 @@ async function exportInventoryOnly(aoi: AoiFeature, tiles: TileFeature[]) {
   validUrls.forEach((url, i) => {
     openUrlInNewTab(url, i * 1000);
   });
+
+  onProgress?.({
+    phase: "done",
+    percent: 100,
+    completed: validUrls.length,
+    total: tiles.length,
+    currentFile: undefined,
+    message: `ZIP d’inventaire généré. ${validUrls.length} lien(s) ouverts dans le navigateur.`,
+    downloadedCount: 0,
+    failedCount: 0,
+  });
 }
 
-export async function exportBundle(params: { aoi: AoiFeature | null; tiles: TileFeature[] }) {
-  const { aoi, tiles } = params;
+export async function exportBundle(params: {
+  aoi: AoiFeature | null;
+  tiles: TileFeature[];
+  onProgress?: (progress: ExportProgress) => void;
+}) {
+  const { aoi, tiles, onProgress } = params;
 
   if (!aoi || tiles.length === 0) {
-    alert("Aucune AOI ou aucune tuile sélectionnée.");
+    const message = "Aucune AOI ou aucune tuile sélectionnée.";
+    onProgress?.({
+      phase: "error",
+      percent: 0,
+      completed: 0,
+      total: tiles.length,
+      currentFile: undefined,
+      message,
+      downloadedCount: 0,
+      failedCount: 0,
+    });
+    alert(message);
     return;
   }
 
@@ -275,7 +490,18 @@ export async function exportBundle(params: { aoi: AoiFeature | null; tiles: Tile
   const withUrlCount = normalized.filter((t) => !!t.url).length;
 
   if (withUrlCount === 0) {
-    alert("Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.");
+    const message = "Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.";
+    onProgress?.({
+      phase: "error",
+      percent: 0,
+      completed: 0,
+      total: tiles.length,
+      currentFile: undefined,
+      message,
+      downloadedCount: 0,
+      failedCount: 0,
+    });
+    alert(message);
     return;
   }
 
@@ -287,9 +513,21 @@ export async function exportBundle(params: { aoi: AoiFeature | null; tiles: Tile
         `Continuer ?`
     );
 
-    if (!proceed) return;
+    if (!proceed) {
+      onProgress?.({
+        phase: "idle",
+        percent: 0,
+        completed: 0,
+        total: tiles.length,
+        currentFile: undefined,
+        message: "Export annulé.",
+        downloadedCount: 0,
+        failedCount: 0,
+      });
+      return;
+    }
 
-    await exportInlineZip(aoi, tiles);
+    await exportInlineZip(aoi, tiles, onProgress);
     return;
   }
 
@@ -300,7 +538,19 @@ export async function exportBundle(params: { aoi: AoiFeature | null; tiles: Tile
       `Continuer ?`
   );
 
-  if (!proceed) return;
+  if (!proceed) {
+    onProgress?.({
+      phase: "idle",
+      percent: 0,
+      completed: 0,
+      total: tiles.length,
+      currentFile: undefined,
+      message: "Export annulé.",
+      downloadedCount: 0,
+      failedCount: 0,
+    });
+    return;
+  }
 
-  await exportInventoryOnly(aoi, tiles);
+  await exportInventoryOnly(aoi, tiles, onProgress);
 }

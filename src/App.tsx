@@ -11,12 +11,36 @@ import {
   reprojectGeoJsonToWgs84,
   type SupportedSourceCrsCode,
 } from "./aoi/reprojectAoi";
-import { exportBundle } from "./export/exportBundle";
+import { exportBundle, type ExportProgress } from "./export/exportBundle";
 
 type Dataset = "lidar" | "mnt";
 type AvailableYears = { lidar: string[]; mnt: string[] };
 type YearFilter = { lidar: string | "ALL"; mnt: string | "ALL" };
 type StatusTone = "info" | "success" | "warning" | "error";
+
+type ExportUiState = {
+  isOpen: boolean;
+  phase: "idle" | "download" | "zip" | "done" | "error";
+  percent: number;
+  completed: number;
+  total: number;
+  currentFile?: string;
+  message?: string;
+  downloadedCount: number;
+  failedCount: number;
+};
+
+const INITIAL_EXPORT_UI_STATE: ExportUiState = {
+  isOpen: false,
+  phase: "idle",
+  percent: 0,
+  completed: 0,
+  total: 0,
+  currentFile: undefined,
+  message: undefined,
+  downloadedCount: 0,
+  failedCount: 0,
+};
 
 /**
  * Déduit le produit d'une tuile pour compter proprement LiDAR vs MNT.
@@ -204,6 +228,136 @@ function ActionButton(props: {
   );
 }
 
+function ExportProgressCard(props: {
+  state: ExportUiState;
+  onClose: () => void;
+}) {
+  const { state, onClose } = props;
+
+  if (!state.isOpen) return null;
+
+  const phaseLabel =
+    state.phase === "download"
+      ? "Téléchargement"
+      : state.phase === "zip"
+        ? "Compression"
+        : state.phase === "done"
+          ? "Terminé"
+          : state.phase === "error"
+            ? "Erreur"
+            : "Préparation";
+
+  const barColor =
+    state.phase === "error"
+      ? "#dc2626"
+      : state.phase === "done"
+        ? "#16a34a"
+        : "#2563eb";
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: 12,
+        borderRadius: 12,
+        border: "1px solid #dbeafe",
+        background: "#ffffff",
+        boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+      }}
+      role="status"
+      aria-live="polite"
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 10,
+          marginBottom: 10,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>
+            Export bundle LiDAR / MNT
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "#4b5563", lineHeight: 1.4 }}>
+            {state.message ?? "Traitement en cours…"}
+          </div>
+        </div>
+
+        {(state.phase === "done" || state.phase === "error" || state.phase === "idle") && (
+          <ActionButton onClick={onClose} variant="secondary">
+            Fermer
+          </ActionButton>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: 12,
+          color: "#6b7280",
+          marginBottom: 6,
+        }}
+      >
+        <span>{phaseLabel}</span>
+        <span>{Math.max(0, Math.min(100, state.percent))}%</span>
+      </div>
+
+      <div
+        style={{
+          width: "100%",
+          height: 10,
+          borderRadius: 999,
+          background: "#e5e7eb",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.max(0, Math.min(100, state.percent))}%`,
+            height: "100%",
+            background: barColor,
+            transition: "width 220ms ease",
+          }}
+        />
+      </div>
+
+      <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "#4b5563" }}>
+        <div>
+          Progression : <strong>{state.completed}</strong> / <strong>{state.total}</strong>
+        </div>
+
+        <div>
+          Incluses : <strong>{state.downloadedCount}</strong> · Échecs :{" "}
+          <strong>{state.failedCount}</strong>
+        </div>
+
+        {state.currentFile && (
+          <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            Fichier en cours : <strong title={state.currentFile}>{state.currentFile}</strong>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function toExportUiState(progress: ExportProgress): ExportUiState {
+  return {
+    isOpen: true,
+    phase: progress.phase,
+    percent: progress.percent,
+    completed: progress.completed,
+    total: progress.total,
+    currentFile: progress.currentFile,
+    message: progress.message,
+    downloadedCount: progress.downloadedCount ?? 0,
+    failedCount: progress.failedCount ?? 0,
+  };
+}
+
 export default function App() {
   /**
    * États métier principaux :
@@ -241,6 +395,7 @@ export default function App() {
   const [loadingAoi, setLoadingAoi] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string>("");
+  const [exportUi, setExportUi] = useState<ExportUiState>(INITIAL_EXPORT_UI_STATE);
 
   /**
    * Valeurs dérivées du produit actif pour simplifier le rendu UI.
@@ -298,7 +453,8 @@ export default function App() {
     if (isExporting) {
       return {
         tone: "info" as StatusTone,
-        message: "Préparation du bundle d’export en cours…",
+        message:
+          exportUi.message ?? "Préparation du bundle d’export en cours…",
       };
     }
 
@@ -338,6 +494,7 @@ export default function App() {
     };
   }, [
     aoiError,
+    exportUi.message,
     hasAoi,
     hasPendingReprojection,
     infoMessage,
@@ -371,8 +528,11 @@ export default function App() {
         setAvailableYears({ lidar: [], mnt: [] });
         setInfoMessage(`Zone d’étude chargée avec succès : ${file.name}`);
         return;
-      } catch (validationError: any) {
-        const message = validationError?.message ?? "Erreur lors du chargement AOI";
+      } catch (validationError: unknown) {
+        const message =
+          validationError instanceof Error
+            ? validationError.message
+            : "Erreur lors du chargement AOI";
 
         if (isWgs84ValidationError(message)) {
           const detected = autoDetectSourceCrsFromGeoJson(geo);
@@ -393,7 +553,7 @@ export default function App() {
 
         throw validationError;
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setAoi(null);
       setSelectedTiles([]);
       setAvailableYears({ lidar: [], mnt: [] });
@@ -401,7 +561,7 @@ export default function App() {
       setPendingAoiFileName("");
       setDetectedSourceCrs(null);
       setInfoMessage("");
-      setAoiError(err?.message ?? "Erreur lors du chargement AOI");
+      setAoiError(err instanceof Error ? err.message : "Erreur lors du chargement AOI");
     } finally {
       setLoadingAoi(false);
       e.target.value = "";
@@ -431,14 +591,15 @@ export default function App() {
       setDetectedSourceCrs(null);
       setAoiError("");
       setInfoMessage("AOI reprojetée et chargée avec succès.");
-    } catch (err: any) {
+    } catch (err: unknown) {
       setAoi(null);
       setSelectedTiles([]);
       setAvailableYears({ lidar: [], mnt: [] });
       setInfoMessage("");
       setAoiError(
-        err?.message ??
-          "La reprojection automatique a échoué. Vérifiez le SCR source choisi."
+        err instanceof Error
+          ? err.message
+          : "La reprojection automatique a échoué. Vérifiez le SCR source choisi."
       );
     } finally {
       setIsReprojectingAoi(false);
@@ -457,6 +618,7 @@ export default function App() {
     setPendingAoiRaw(null);
     setPendingAoiFileName("");
     setDetectedSourceCrs(null);
+    setExportUi(INITIAL_EXPORT_UI_STATE);
   }
 
   /**
@@ -464,7 +626,8 @@ export default function App() {
    */
   function clearSelection() {
     setSelectedTiles([]);
-    setInfoMessage("Sélection et export vidée.");
+    setInfoMessage("Sélection et export vidés.");
+    setExportUi(INITIAL_EXPORT_UI_STATE);
   }
 
   /**
@@ -517,10 +680,43 @@ export default function App() {
     try {
       setIsExporting(true);
       setInfoMessage("");
-      await exportBundle({ aoi, tiles: selectedTiles });
+      setAoiError("");
+      setExportUi({
+        isOpen: true,
+        phase: "download",
+        percent: 0,
+        completed: 0,
+        total: selectedTiles.length,
+        currentFile: undefined,
+        message: "Préparation de l’export…",
+        downloadedCount: 0,
+        failedCount: 0,
+      });
+
+      await exportBundle({
+        aoi,
+        tiles: selectedTiles,
+        onProgress: (progress) => {
+          setExportUi(toExportUiState(progress));
+        },
+      });
+
       setInfoMessage("Export ZIP généré avec succès.");
-    } catch (err: any) {
-      setAoiError(err?.message ?? "Erreur lors de la création du bundle d’export.");
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Erreur lors de la création du bundle d’export.";
+      setAoiError(message);
+      setExportUi({
+        isOpen: true,
+        phase: "error",
+        percent: exportUi.percent,
+        completed: exportUi.completed,
+        total: exportUi.total,
+        currentFile: exportUi.currentFile,
+        message,
+        downloadedCount: exportUi.downloadedCount,
+        failedCount: exportUi.failedCount,
+      });
     } finally {
       setIsExporting(false);
     }
@@ -528,7 +724,6 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#f3f4f6" }}>
-      {/* Panneau latéral : contrôle utilisateur, statut, filtres et panier */}
       <aside
         style={{
           width: 360,
@@ -538,7 +733,6 @@ export default function App() {
           background: "#f9fafb",
         }}
       >
-        {/* En-tête applicatif + résumé de statut */}
         <div
           style={{
             padding: 14,
@@ -602,9 +796,13 @@ export default function App() {
             <SmallStat label="Sélection active" value={activeSelectionCount} />
             <SmallStat label="Total sélectionné" value={totalSelectionCount} />
           </div>
+
+          <ExportProgressCard
+            state={exportUi}
+            onClose={() => setExportUi(INITIAL_EXPORT_UI_STATE)}
+          />
         </div>
 
-        {/* Chargement AOI + gestion de la reprojection assistée */}
         <SectionCard
           title="Zone d’étude"
           subtitle="Chargez une AOI pour lancer la lecture cartographique et activer la sélection."
@@ -792,7 +990,6 @@ export default function App() {
           </div>
         </SectionCard>
 
-        {/* Filtres métier : produit actif et année disponible */}
         <SectionCard
           title="Filtres"
           subtitle="Ajustez le produit et l’année pour affiner la lecture métier de la zone analysée."
@@ -894,7 +1091,6 @@ export default function App() {
           </div>
         </SectionCard>
 
-        {/* Résumé de la sélection et actions d'export */}
         <SectionCard
           title="Sélection et export"
           subtitle="Le résultat courant devient immédiatement exploitable pour la préparation du bundle ZIP."
@@ -918,7 +1114,7 @@ export default function App() {
               disabled={!canExport}
               variant="primary"
             >
-              {isExporting ? "Export..." : "Exporter (ZIP)"}
+              {isExporting ? "Export en cours..." : "Exporter (ZIP)"}
             </ActionButton>
 
             <ActionButton
@@ -943,7 +1139,6 @@ export default function App() {
           )}
         </SectionCard>
 
-        {/* Panier : liste détaillée des tuiles retenues */}
         <SectionCard
           title="Panier"
           subtitle="Inventaire synthétique des tuiles prêtes à être exportées."
@@ -952,7 +1147,6 @@ export default function App() {
         </SectionCard>
       </aside>
 
-      {/* Zone principale : rendu cartographique et interactions sur la carte */}
       <main style={{ flex: 1, minWidth: 0 }}>
         <MapView
           aoi={aoi}
