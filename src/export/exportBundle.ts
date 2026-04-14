@@ -9,6 +9,8 @@ const DEFAULT_CONCURRENCY =
     ? Math.max(2, Math.min(6, navigator.hardwareConcurrency))
     : 4;
 
+export type ExportMode = "inline-zip" | "inventory-only";
+
 export type ExportProgress =
   | {
       phase: "idle";
@@ -19,6 +21,9 @@ export type ExportProgress =
       message?: string;
       downloadedCount?: number;
       failedCount?: number;
+      elapsedMs?: number;
+      etaMs?: number;
+      mode?: ExportMode;
     }
   | {
       phase: "download";
@@ -29,6 +34,9 @@ export type ExportProgress =
       message?: string;
       downloadedCount?: number;
       failedCount?: number;
+      elapsedMs?: number;
+      etaMs?: number;
+      mode?: ExportMode;
     }
   | {
       phase: "zip";
@@ -39,6 +47,9 @@ export type ExportProgress =
       message?: string;
       downloadedCount?: number;
       failedCount?: number;
+      elapsedMs?: number;
+      etaMs?: number;
+      mode?: ExportMode;
     }
   | {
       phase: "done";
@@ -49,6 +60,9 @@ export type ExportProgress =
       message?: string;
       downloadedCount?: number;
       failedCount?: number;
+      elapsedMs?: number;
+      etaMs?: number;
+      mode?: ExportMode;
     }
   | {
       phase: "error";
@@ -59,6 +73,9 @@ export type ExportProgress =
       message: string;
       downloadedCount?: number;
       failedCount?: number;
+      elapsedMs?: number;
+      etaMs?: number;
+      mode?: ExportMode;
     };
 
 type DownloadFailure = {
@@ -119,7 +136,7 @@ function failuresToCsv(failures: DownloadFailure[]) {
 
 function readmeQgisMd(
   totalCount: number,
-  mode: "inline-zip" | "inventory-only",
+  mode: ExportMode,
   downloadedCount = 0,
   failedCount = 0
 ) {
@@ -128,7 +145,9 @@ function readmeQgisMd(
       ? `Mode utilisé: ZIP avec tuiles téléchargées directement
 - Tuiles incluses dans le ZIP: ${downloadedCount}
 - Échecs: ${failedCount}`
-      : `Mode utilisé: ZIP d'inventaire + ouverture des URLs dans de nouveaux onglets`;
+      : `Mode utilisé: ZIP d'inventaire + ouverture des URLs dans de nouveaux onglets
+- Les tuiles ne sont pas incluses dans le ZIP
+- Le ZIP contient l'inventaire et les fichiers de contexte`;
 
   return `# Export QC LiDAR/MNT — Sélection de tuiles
 
@@ -174,6 +193,16 @@ function openUrlInNewTab(url: string, delayMs: number) {
   }, delayMs);
 }
 
+function estimateEtaMs(completed: number, total: number, startedAt: number) {
+  if (completed <= 0 || total <= 0 || completed >= total) return 0;
+
+  const elapsedMs = Date.now() - startedAt;
+  const averagePerItem = elapsedMs / completed;
+  const remaining = total - completed;
+
+  return Math.max(0, Math.round(averagePerItem * remaining));
+}
+
 async function fetchAsBlob(url: string) {
   const response = await fetch(url);
 
@@ -187,6 +216,8 @@ async function fetchAsBlob(url: string) {
 async function downloadTilesWithConcurrency(
   tiles: TileFeature[],
   concurrency: number,
+  startedAt: number,
+  mode: ExportMode,
   onProgress?: (progress: ExportProgress) => void
 ) {
   const results: DownloadedFile[] = [];
@@ -233,12 +264,18 @@ async function downloadTilesWithConcurrency(
         message: "Téléchargement des tuiles en cours…",
         downloadedCount: results.length,
         failedCount: failures.length,
+        elapsedMs: Date.now() - startedAt,
+        etaMs: estimateEtaMs(completed, tiles.length, startedAt),
+        mode,
       });
     }
   }
 
   await Promise.all(
-    Array.from({ length: Math.max(1, Math.min(concurrency, tiles.length)) }, () => worker())
+    Array.from(
+      { length: Math.max(1, Math.min(concurrency, tiles.length)) },
+      () => worker()
+    )
   );
 
   return { results, failures };
@@ -247,7 +284,7 @@ async function downloadTilesWithConcurrency(
 async function buildInventoryZip(params: {
   aoi: AoiFeature;
   tiles: TileFeature[];
-  mode: "inline-zip" | "inventory-only";
+  mode: ExportMode;
   downloadedFiles?: DownloadedFile[];
   failures?: DownloadFailure[];
   onZipProgress?: (percent: number) => void;
@@ -304,6 +341,9 @@ async function exportInlineZip(
   tiles: TileFeature[],
   onProgress?: (progress: ExportProgress) => void
 ) {
+  const startedAt = Date.now();
+  const mode: ExportMode = "inline-zip";
+
   onProgress?.({
     phase: "download",
     percent: 0,
@@ -313,11 +353,16 @@ async function exportInlineZip(
     message: "Préparation du téléchargement…",
     downloadedCount: 0,
     failedCount: 0,
+    elapsedMs: 0,
+    etaMs: undefined,
+    mode,
   });
 
   const { results, failures } = await downloadTilesWithConcurrency(
     tiles,
     DEFAULT_CONCURRENCY,
+    startedAt,
+    mode,
     onProgress
   );
 
@@ -330,12 +375,15 @@ async function exportInlineZip(
     message: "Création du bundle ZIP…",
     downloadedCount: results.length,
     failedCount: failures.length,
+    elapsedMs: Date.now() - startedAt,
+    etaMs: undefined,
+    mode,
   });
 
   const blob = await buildInventoryZip({
     aoi,
     tiles,
-    mode: "inline-zip",
+    mode,
     downloadedFiles: results,
     failures,
     onZipProgress: (zipPercent) => {
@@ -350,6 +398,9 @@ async function exportInlineZip(
         message: "Compression du ZIP en cours…",
         downloadedCount: results.length,
         failedCount: failures.length,
+        elapsedMs: Date.now() - startedAt,
+        etaMs: undefined,
+        mode,
       });
     },
   });
@@ -370,6 +421,9 @@ async function exportInlineZip(
     message: doneMessage,
     downloadedCount: results.length,
     failedCount: failures.length,
+    elapsedMs: Date.now() - startedAt,
+    etaMs: 0,
+    mode,
   });
 }
 
@@ -378,23 +432,30 @@ async function exportInventoryOnly(
   tiles: TileFeature[],
   onProgress?: (progress: ExportProgress) => void
 ) {
+  const startedAt = Date.now();
+  const mode: ExportMode = "inventory-only";
+
   onProgress?.({
     phase: "zip",
-    percent: 15,
+    percent: 10,
     completed: 0,
     total: tiles.length,
     currentFile: undefined,
-    message: "Création du ZIP d’inventaire…",
+    message:
+      "Sélection volumineuse détectée : création d’un ZIP d’inventaire. Les tuiles ne seront pas incluses dans le bundle.",
     downloadedCount: 0,
     failedCount: 0,
+    elapsedMs: 0,
+    etaMs: undefined,
+    mode,
   });
 
   const blob = await buildInventoryZip({
     aoi,
     tiles,
-    mode: "inventory-only",
+    mode,
     onZipProgress: (zipPercent) => {
-      const percent = 15 + Math.round((zipPercent / 100) * 70);
+      const percent = 10 + Math.round((zipPercent / 100) * 75);
 
       onProgress?.({
         phase: "zip",
@@ -402,9 +463,13 @@ async function exportInventoryOnly(
         completed: 0,
         total: tiles.length,
         currentFile: undefined,
-        message: "Préparation de l’inventaire d’export…",
+        message:
+          "Création du ZIP d’inventaire en cours. Les téléchargements se feront séparément.",
         downloadedCount: 0,
         failedCount: 0,
+        elapsedMs: Date.now() - startedAt,
+        etaMs: undefined,
+        mode,
       });
     },
   });
@@ -424,6 +489,9 @@ async function exportInventoryOnly(
     message: "Ouverture des liens de téléchargement…",
     downloadedCount: 0,
     failedCount: 0,
+    elapsedMs: Date.now() - startedAt,
+    etaMs: undefined,
+    mode,
   });
 
   if (validUrls.length === 0) {
@@ -436,6 +504,9 @@ async function exportInventoryOnly(
       message: "Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.",
       downloadedCount: 0,
       failedCount: 0,
+      elapsedMs: Date.now() - startedAt,
+      etaMs: 0,
+      mode,
     });
     alert("Aucune URL de téléchargement trouvée pour les tuiles sélectionnées.");
     return;
@@ -444,6 +515,7 @@ async function exportInventoryOnly(
   alert(
     `Le ZIP d'inventaire a été généré.\n\n` +
       `${validUrls.length} fichier(s) vont être ouverts dans de nouveaux onglets.\n` +
+      `Les tuiles ne sont pas incluses dans le ZIP.\n\n` +
       `Autorisez les popups/téléchargements multiples si le navigateur le demande.`
   );
 
@@ -460,6 +532,9 @@ async function exportInventoryOnly(
     message: `ZIP d’inventaire généré. ${validUrls.length} lien(s) ouverts dans le navigateur.`,
     downloadedCount: 0,
     failedCount: 0,
+    elapsedMs: Date.now() - startedAt,
+    etaMs: 0,
+    mode,
   });
 }
 
@@ -481,6 +556,9 @@ export async function exportBundle(params: {
       message,
       downloadedCount: 0,
       failedCount: 0,
+      elapsedMs: 0,
+      etaMs: undefined,
+      mode: undefined,
     });
     alert(message);
     return;
@@ -500,6 +578,9 @@ export async function exportBundle(params: {
       message,
       downloadedCount: 0,
       failedCount: 0,
+      elapsedMs: 0,
+      etaMs: undefined,
+      mode: undefined,
     });
     alert(message);
     return;
@@ -508,7 +589,7 @@ export async function exportBundle(params: {
   if (tiles.length <= MAX_INLINE_DOWNLOADS) {
     const proceed = confirm(
       `Petite sélection détectée (${tiles.length} tuile(s)).\n\n` +
-        `L'application va tenter de créer un vrai ZIP contenant les tuiles téléchargées.\n` +
+        `L'application va créer un ZIP complet contenant les tuiles téléchargées.\n` +
         `Cela peut prendre du temps selon la taille des fichiers.\n\n` +
         `Continuer ?`
     );
@@ -523,6 +604,9 @@ export async function exportBundle(params: {
         message: "Export annulé.",
         downloadedCount: 0,
         failedCount: 0,
+        elapsedMs: 0,
+        etaMs: undefined,
+        mode: "inline-zip",
       });
       return;
     }
@@ -533,8 +617,8 @@ export async function exportBundle(params: {
 
   const proceed = confirm(
     `Sélection volumineuse détectée (${tiles.length} tuiles).\n\n` +
-      `Pour éviter les plantages mémoire du navigateur, l'application va créer un ZIP d'inventaire ` +
-      `et ouvrir les URLs de téléchargement séparément.\n\n` +
+      `Pour éviter les plantages mémoire du navigateur, l'application va créer un ZIP d'inventaire.\n` +
+      `Les tuiles ne seront pas incluses dans le bundle et les URLs seront ouvertes séparément.\n\n` +
       `Continuer ?`
   );
 
@@ -548,6 +632,9 @@ export async function exportBundle(params: {
       message: "Export annulé.",
       downloadedCount: 0,
       failedCount: 0,
+      elapsedMs: 0,
+      etaMs: undefined,
+      mode: "inventory-only",
     });
     return;
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
-import type { LngLatBoundsLike, Map } from "maplibre-gl";
+import type { LngLatBoundsLike, Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import type {
@@ -209,7 +209,7 @@ function perfMeasure(name: string, start: string, end: string) {
   }
 }
 
-function getGeoJsonSource(map: Map, sourceId: string) {
+function getGeoJsonSource(map: MapLibreMap, sourceId: string) {
   return map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
 }
 
@@ -391,7 +391,7 @@ function getMapButtonStyle(isPrimary = false): React.CSSProperties {
 }
 
 export default function MapView(props: Props) {
-  const mapRef = useRef<Map | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   /**
@@ -701,7 +701,7 @@ export default function MapView(props: Props) {
     lookupByNormalizedIdRef.current[dataset] = byNormalized;
   }
 
-  function setSourceDataIfChanged(map: Map, sourceId: string, key: string, data: unknown) {
+  function setSourceDataIfChanged(map: MapLibreMap, sourceId: string, key: string, data: unknown) {
     const source = getGeoJsonSource(map, sourceId);
     if (!source) return;
     const previousKey = sourceDataKeyRef.current.get(sourceId);
@@ -710,7 +710,7 @@ export default function MapView(props: Props) {
     source.setData(data as any);
   }
 
-  function setSelectedSourceData(map: Map, sourceId: string, features: RuntimeTileFeature[]) {
+  function setSelectedSourceData(map: MapLibreMap, sourceId: string, features: RuntimeTileFeature[]) {
     const key = `${sourceId}::${buildFeatureSignature(features)}`;
     const fc: FeatureCollectionOf<TileProps> = { type: "FeatureCollection", features };
     setSourceDataIfChanged(map, sourceId, key, fc);
@@ -720,7 +720,7 @@ export default function MapView(props: Props) {
    * Initialise toutes les sources et layers MapLibre
    * (idempotent)
    */
-  function ensureCustomSourcesAndLayers(map: Map) {
+  function ensureCustomSourcesAndLayers(map: MapLibreMap) {
     if (!map.getSource(SRC_LIDAR)) map.addSource(SRC_LIDAR, { type: "geojson", data: EMPTY_TILE_FC as any });
     if (!map.getSource(SRC_MNT)) map.addSource(SRC_MNT, { type: "geojson", data: EMPTY_TILE_FC as any });
     if (!map.getSource(SRC_LIDAR_SELECTED)) map.addSource(SRC_LIDAR_SELECTED, { type: "geojson", data: EMPTY_TILE_FC as any });
@@ -750,7 +750,7 @@ export default function MapView(props: Props) {
     if (!map.getLayer(LYR_HOVER_OUTLINE)) map.addLayer({ id: LYR_HOVER_OUTLINE, type: "line", source: SRC_HOVER, paint: { "line-color": "#f59e0b", "line-width": 3, "line-opacity": 1 } });
   }
 
-  function setDatasetVisibility(map: Map, dataset: Dataset, visible: boolean) {
+  function setDatasetVisibility(map: MapLibreMap, dataset: Dataset, visible: boolean) {
     const visibility = visible ? "visible" : "none";
     for (const id of getSelectionLayerIds(dataset)) {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
@@ -802,25 +802,25 @@ export default function MapView(props: Props) {
     });
   }
 
-  function setTileSourceData(map: Map, sourceId: string, features: RuntimeTileFeature[]) {
+  function setTileSourceData(map: MapLibreMap, sourceId: string, features: RuntimeTileFeature[]) {
     const key = `${sourceId}::${buildFeatureSignature(features)}`;
     const fc: FeatureCollectionOf<TileProps> = { type: "FeatureCollection", features };
     setSourceDataIfChanged(map, sourceId, key, fc);
   }
 
-  function setLabelSourceData(map: Map, sourceId: string, features: LabelFeature[]) {
+  function setLabelSourceData(map: MapLibreMap, sourceId: string, features: LabelFeature[]) {
     const key = `${sourceId}::${features.length}:${features[0]?.properties.normalized_id ?? ""}:${features[features.length - 1]?.properties.normalized_id ?? ""}`;
     const fc: LabelFC = { type: "FeatureCollection", features };
     setSourceDataIfChanged(map, sourceId, key, fc);
   }
 
-  function setAoiSourceData(map: Map, aoi: AoiFeature | null) {
+  function setAoiSourceData(map: MapLibreMap, aoi: AoiFeature | null) {
     const data = aoi ? { type: "FeatureCollection", features: [aoi] } : EMPTY_AOI_FC;
     const key = aoi ? `aoi::${JSON.stringify(aoi.geometry)}` : "aoi::empty";
     setSourceDataIfChanged(map, SRC_AOI, key, data);
   }
 
-  function setHoverSourceData(map: Map, tile: RuntimeTileFeature | null) {
+  function setHoverSourceData(map: MapLibreMap, tile: RuntimeTileFeature | null) {
     if (!tile) {
       setSourceDataIfChanged(map, SRC_HOVER, "hover::empty", EMPTY_HOVER_FC);
       return;
@@ -832,7 +832,7 @@ export default function MapView(props: Props) {
     setSourceDataIfChanged(map, SRC_HOVER, `hover::${tile.id}`, fc);
   }
 
-  function updateLabelSource(map: Map, dataset: Dataset, features: RuntimeTileFeature[]) {
+  function updateLabelSource(map: MapLibreMap, dataset: Dataset, features: RuntimeTileFeature[]) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR_LABELS : SRC_MNT_LABELS;
     const cacheKey = `${dataset}::${buildFeatureSignature(features)}`;
     const cached = labelCacheRef.current.get(cacheKey);
@@ -862,7 +862,7 @@ export default function MapView(props: Props) {
     setLabelSourceData(map, sourceId, pointFeatures);
   }
 
-  function setTilesOnMap(map: Map, dataset: Dataset, rawTiles: TileFeature[]) {
+  function setTilesOnMap(map: MapLibreMap, dataset: Dataset, rawTiles: TileFeature[]) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
     const runtimeTiles = toRuntimeTiles(rawTiles, dataset);
     setRuntimeTiles(dataset, runtimeTiles);
@@ -875,7 +875,7 @@ export default function MapView(props: Props) {
     }
   }
 
-  function clearSelectionState(map: Map, dataset: Dataset) {
+  function clearSelectionState(map: MapLibreMap, dataset: Dataset) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
     const previous = selectedKeysRef.current[dataset];
     for (const id of previous) {
@@ -888,7 +888,7 @@ export default function MapView(props: Props) {
     selectedKeysRef.current[dataset] = new Set<string>();
   }
 
-  function clearSelectionImmediately(map: Map) {
+  function clearSelectionImmediately(map: MapLibreMap) {
     selectionSeqRef.current += 1;
     requestSeqRef.current += 1;
     clearSelectionState(map, "lidar");
@@ -907,7 +907,7 @@ export default function MapView(props: Props) {
    * - diff entre ancienne et nouvelle sélection
    * - évite re-render inutile
    */
-  function applySelectionState(map: Map, dataset: Dataset, nextSelected: Set<string>, forceReapply = false) {
+  function applySelectionState(map: MapLibreMap, dataset: Dataset, nextSelected: Set<string>, forceReapply = false) {
     const sourceId = dataset === "lidar" ? SRC_LIDAR : SRC_MNT;
     const previous = selectedKeysRef.current[dataset];
     if (!forceReapply && areSetsEqual(previous, nextSelected)) return;
@@ -940,7 +940,7 @@ export default function MapView(props: Props) {
    * toutes les tuiles affichées sont sélectionnées si AOI active
    */
   function applySelectionFromDisplayedTiles(
-    map: Map,
+    map: MapLibreMap,
     lidarTiles: RuntimeTileFeature[],
     mntTiles: RuntimeTileFeature[]
   ) {
@@ -1015,7 +1015,7 @@ export default function MapView(props: Props) {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  function getInteractiveFeaturesAtPoint(map: Map, point: maplibregl.PointLike) {
+  function getInteractiveFeaturesAtPoint(map: MapLibreMap, point: maplibregl.PointLike) {
     return map.queryRenderedFeatures(point, {
       layers: [
         LYR_LIDAR,
@@ -1034,14 +1034,14 @@ export default function MapView(props: Props) {
     });
   }
 
-  function clearHover(map: Map) {
+  function clearHover(map: MapLibreMap) {
     if (hoverKeyRef.current) {
       hoverKeyRef.current = "";
       setHoverSourceData(map, null);
     }
   }
 
-  function fitMapToAoi(map: Map, aoi: AoiFeature | null, force = false) {
+  function fitMapToAoi(map: MapLibreMap, aoi: AoiFeature | null, force = false) {
     if (!aoi) return;
     const aoiKey = JSON.stringify(aoi.geometry);
     if (!force && lastFittedAoiKeyRef.current === aoiKey) return;
@@ -1055,7 +1055,7 @@ export default function MapView(props: Props) {
     });
   }
 
-  function resetMapView(map: Map) {
+  function resetMapView(map: MapLibreMap) {
     lastFittedAoiKeyRef.current = "";
     map.fitBounds(QUEBEC_BOUNDS, {
       padding: { top: 36, right: 36, bottom: 36, left: 36 },
@@ -1077,7 +1077,7 @@ export default function MapView(props: Props) {
    * 6. Met à jour sources/layers
    * 7. Met à jour sélection
    */
-  async function refreshTiles(map: Map, options?: { reloadData?: boolean }) {
+  async function refreshTiles(map: MapLibreMap, options?: { reloadData?: boolean }) {
     perfMark("refreshTiles:start");
     const uiSeq = ++refreshUiSeqRef.current;
     setIsRefreshing(true);
@@ -1231,7 +1231,7 @@ export default function MapView(props: Props) {
    * - éviter spam refresh lors du pan/zoom
    * - fusionner plusieurs triggers
    */
-  function scheduleRefresh(map: Map, options?: { delay?: number; reloadData?: boolean; reason?: string }) {
+  function scheduleRefresh(map: MapLibreMap, options?: { delay?: number; reloadData?: boolean; reason?: string }) {
     const delay = options?.delay ?? 80;
     const reloadData = options?.reloadData ?? false;
     const reason = options?.reason ?? "unspecified";
