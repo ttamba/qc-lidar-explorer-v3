@@ -143,7 +143,7 @@ function readmeQgisMd(
   const modeText =
     mode === "inline-zip"
       ? `Mode utilisé: ZIP avec tuiles téléchargées directement\n- Tuiles incluses dans le ZIP: ${downloadedCount}\n- Échecs: ${failedCount}`
-      : `Mode utilisé: ZIP d'inventaire + ouverture des URLs dans de nouveaux onglets\n- Les tuiles ne sont pas incluses directement dans le ZIP`;
+      : `Mode utilisé: ZIP d'inventaire avec liens de téléchargement\n- Les tuiles ne sont pas incluses directement dans le ZIP`;
 
   return `# Export QC LiDAR/MNT — Sélection de tuiles
 
@@ -155,7 +155,7 @@ Contenu:
 
 Selon le mode :
 - inline-zip: le ZIP contient aussi les tuiles téléchargées
-- inventory-only: les fichiers sources sont ouverts séparément dans le navigateur
+- inventory-only: le ZIP contient l'inventaire et les liens de téléchargement
 
 ## Résumé
 - Tuiles sélectionnées: ${totalCount}
@@ -183,18 +183,12 @@ function timestampString() {
   return new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 }
 
-function openUrlInNewTab(url: string, delayMs: number) {
-  setTimeout(() => {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, delayMs);
-}
-
 function getBundleProductLabel(tiles: TileFeature[]) {
   const products = new Set(
-  tiles
-    .map((tile) => normalizeTile(tile).product)
-    .filter((p): p is "lidar" | "mnt" => p === "lidar" || p === "mnt")
-);
+    tiles
+      .map((tile) => normalizeTile(tile).product)
+      .filter((p): p is "lidar" | "mnt" => p === "lidar" || p === "mnt")
+  );
 
   if (products.size === 1) {
     if (products.has("lidar")) return "lidar";
@@ -213,6 +207,16 @@ function estimateEtaMs(completed: number, total: number, startedAt: number) {
   const remaining = total - completed;
 
   return Math.max(0, Math.round(avgPerItem * remaining));
+}
+
+function linksToTxt(tiles: TileFeature[]) {
+  return tiles
+    .map((tile, i) => {
+      const t = normalizeTile(tile);
+      return t.url ? `${i + 1}. ${t.name} | ${t.product}\n${t.url}\n` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function fetchAsBlob(url: string) {
@@ -308,6 +312,10 @@ async function buildInventoryZip(params: {
   } = params;
 
   const zip = new JSZip();
+
+  if (mode === "inventory-only") {
+    zip.file("download_links.txt", linksToTxt(tiles));
+  }
 
   zip.file(
     "aoi.geojson",
@@ -508,13 +516,9 @@ async function exportInventoryOnly(
 
   alert(
     `Le ZIP d'inventaire a été généré.\n\n` +
-      `${validUrls.length} fichier(s) vont être ouverts dans de nouveaux onglets.\n` +
-      `Autorisez les popups/téléchargements multiples si le navigateur le demande.`
+      `${validUrls.length} lien(s) de téléchargement sont inclus dans download_links.txt.\n` +
+      `Les téléchargements automatiques multiples ont été désactivés pour éviter le blocage par le navigateur.`
   );
-
-  validUrls.forEach((url, i) => {
-    openUrlInNewTab(url, i * 1000);
-  });
 
   onProgress?.({
     phase: "done",
@@ -522,7 +526,7 @@ async function exportInventoryOnly(
     completed: validUrls.length,
     total: tiles.length,
     currentFile: undefined,
-    message: `ZIP d’inventaire généré. ${validUrls.length} lien(s) de téléchargement ouverts séparément.`,
+    message: `ZIP d’inventaire généré. ${validUrls.length} lien(s) de téléchargement sont listés dans download_links.txt.`,
     downloadedCount: 0,
     failedCount: 0,
     elapsedMs: Date.now() - startedAt,
@@ -610,9 +614,9 @@ export async function exportBundle(params: {
 
   const proceed = confirm(
     `Sélection volumineuse détectée (${tiles.length} tuiles).\n\n` +
-      `Pour éviter les plantages mémoire du navigateur, l'application va créer un ZIP d'inventaire ` +
-      `et ouvrir les URLs de téléchargement séparément.\n\n` +
-      `Les tuiles ne seront pas incluses directement dans le bundle.\n\n` +
+      `Pour éviter les plantages mémoire du navigateur, l'application va créer un ZIP d'inventaire.\n\n` +
+      `Les tuiles ne seront pas incluses directement dans le bundle.\n` +
+      `Les liens de téléchargement seront listés dans download_links.txt.\n\n` +
       `Continuer ?`
   );
 
