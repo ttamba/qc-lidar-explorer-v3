@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import MapView from "./map/MapView";
 import Basket from "./ui/Basket";
 import type { TileFeature, AoiFeature } from "./types";
@@ -16,6 +16,14 @@ import {
   type ExportMode,
   type ExportProgress,
 } from "./export/exportBundle";
+import {
+  pingLocalAgent,
+  createLocalExportJob,
+  getLocalExportJobStatus,
+  cancelLocalExportJob,
+  buildLocalExportJob,
+  type LocalAgentJobStatus,
+} from "./agent/localAgent";
 
 type Dataset = "lidar" | "mnt";
 type AvailableYears = { lidar: string[]; mnt: string[] };
@@ -78,7 +86,7 @@ function formatDuration(ms?: number) {
   return `${minutes} min ${seconds}s`;
 }
 
-function getStatusCardStyle(tone: StatusTone): React.CSSProperties {
+function getStatusCardStyle(tone: StatusTone): CSSProperties {
   switch (tone) {
     case "success":
       return {
@@ -110,7 +118,7 @@ function getStatusCardStyle(tone: StatusTone): React.CSSProperties {
 
 function SectionCard(props: {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
   subtitle?: string;
 }) {
   return (
@@ -139,7 +147,7 @@ function SectionCard(props: {
 
 function StatusCard(props: {
   tone: StatusTone;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div
@@ -161,7 +169,7 @@ function StatusCard(props: {
 
 function SmallStat(props: {
   label: string;
-  value: React.ReactNode;
+  value: ReactNode;
 }) {
   return (
     <div
@@ -181,13 +189,13 @@ function SmallStat(props: {
 function ActionButton(props: {
   onClick?: () => void;
   disabled?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
   variant?: "primary" | "secondary" | "danger";
   type?: "button" | "submit" | "reset";
 }) {
   const variant = props.variant ?? "secondary";
 
-  let style: React.CSSProperties = {
+  let style: CSSProperties = {
     padding: "9px 12px",
     borderRadius: 10,
     border: "1px solid #d1d5db",
@@ -259,7 +267,7 @@ function ExportProgressCard(props: {
     state.mode === "inline-zip"
       ? "ZIP complet avec tuiles"
       : state.mode === "inventory-only"
-        ? "ZIP d’inventaire + téléchargements séparés"
+        ? "ZIP d’inventaire + liens"
         : "—";
 
   return (
@@ -391,7 +399,7 @@ export default function App() {
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
 
-  const [pendingAoiRaw, setPendingAoiRaw] = useState<any | null>(null);
+  const [pendingAoiRaw, setPendingAoiRaw] = useState<Record<string, unknown> | null>(null);
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
   const [selectedSourceCrs, setSelectedSourceCrs] =
     useState<SupportedSourceCrsCode>("EPSG:32188");
@@ -412,6 +420,11 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string>("");
   const [exportUi, setExportUi] = useState<ExportUiState>(INITIAL_EXPORT_UI_STATE);
+
+  const [isLocalAgentReachable, setIsLocalAgentReachable] = useState<boolean | null>(null);
+  const [localAgentInfo, setLocalAgentInfo] = useState<string>("");
+  const [localExportJobId, setLocalExportJobId] = useState<string | null>(null);
+  const [localOutputDir, setLocalOutputDir] = useState<string>("C:\\HQ\\exports");
 
   const activeYears =
     selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
@@ -509,7 +522,106 @@ export default function App() {
     loadingAoi,
   ]);
 
-  async function handleAoiFile(e: React.ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkAgent() {
+      try {
+        const health = await pingLocalAgent();
+        if (!isMounted) return;
+        setIsLocalAgentReachable(true);
+        setLocalAgentInfo(`${health.service} v${health.version}`);
+      } catch {
+        if (!isMounted) return;
+        setIsLocalAgentReachable(false);
+        setLocalAgentInfo("");
+      }
+    }
+
+    void checkAgent();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!localExportJobId) return;
+
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const status: LocalAgentJobStatus = await getLocalExportJobStatus(localExportJobId);
+        if (cancelled) return;
+
+        setExportUi({
+          isOpen: true,
+          phase:
+            status.phase === "queued" || status.phase === "prepare"
+              ? "download"
+              : status.phase === "download"
+                ? "download"
+                : status.phase === "zip"
+                  ? "zip"
+                  : status.phase === "done"
+                    ? "done"
+                    : "error",
+          percent: status.percent,
+          completed: status.completed,
+          total: status.total,
+          currentFile: status.current_file ?? undefined,
+          message:
+            status.message ??
+            (status.phase === "zip"
+              ? "Création du ZIP final…"
+              : "Téléchargement local en cours…"),
+          downloadedCount: status.downloaded_count,
+          failedCount: status.failed_count,
+          elapsedMs: status.elapsed_ms,
+          etaMs: status.eta_ms,
+          mode: "inline-zip",
+        });
+
+        if (
+          status.status === "completed" ||
+          status.status === "failed" ||
+          status.status === "cancelled"
+        ) {
+          window.clearInterval(timer);
+
+          if (status.status === "completed") {
+            setInfoMessage(
+              status.zip_path
+                ? `Export local terminé. ZIP généré : ${status.zip_path}`
+                : "Export local terminé."
+            );
+          } else if (status.status === "failed") {
+            setAoiError(status.message ?? "Le job local a échoué.");
+          } else {
+            setInfoMessage("Export local annulé.");
+          }
+
+          setLocalExportJobId(null);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        window.clearInterval(timer);
+        setLocalExportJobId(null);
+        setAoiError(
+          error instanceof Error
+            ? error.message
+            : "Perte de communication avec l’agent local."
+        );
+      }
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [localExportJobId]);
+
+  async function handleAoiFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -541,7 +653,7 @@ export default function App() {
           setAoi(null);
           setSelectedTiles([]);
           setAvailableYears({ lidar: [], mnt: [] });
-          setPendingAoiRaw(geo);
+          setPendingAoiRaw(geo as Record<string, unknown>);
           setPendingAoiFileName(file.name);
           setDetectedSourceCrs(detected);
           setSelectedSourceCrs(detected ?? "EPSG:32188");
@@ -698,11 +810,84 @@ export default function App() {
     }
   }
 
+  async function handleLocalExport() {
+    if (!aoi || selectedTiles.length === 0) {
+      window.alert("Aucune AOI ou aucune tuile sélectionnée.");
+      return;
+    }
+
+    try {
+      setInfoMessage("");
+      setAoiError("");
+
+      const job = buildLocalExportJob({
+        aoi,
+        tiles: selectedTiles,
+        outputDir: localOutputDir,
+      });
+
+      setExportUi({
+        isOpen: true,
+        phase: "download",
+        percent: 0,
+        completed: 0,
+        total: selectedTiles.length,
+        currentFile: undefined,
+        message: "Création du job d’export local…",
+        downloadedCount: 0,
+        failedCount: 0,
+        elapsedMs: 0,
+        etaMs: undefined,
+        mode: "inline-zip",
+      });
+
+      const created = await createLocalExportJob(job);
+      setLocalExportJobId(created.job_id);
+      setInfoMessage("Job d’export local lancé.");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Impossible de démarrer l’export local.";
+
+      setAoiError(message);
+      setExportUi({
+        isOpen: true,
+        phase: "error",
+        percent: 0,
+        completed: 0,
+        total: selectedTiles.length,
+        currentFile: undefined,
+        message,
+        downloadedCount: 0,
+        failedCount: 0,
+        elapsedMs: 0,
+        etaMs: 0,
+        mode: "inline-zip",
+      });
+    }
+  }
+
+  async function handleCancelLocalExport() {
+    if (!localExportJobId) return;
+
+    try {
+      await cancelLocalExportJob(localExportJobId);
+      setInfoMessage("Demande d’annulation envoyée à l’agent local.");
+    } catch (error) {
+      setAoiError(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’annuler le job local."
+      );
+    }
+  }
+
   return (
     <div style={{ display: "flex", height: "100vh", background: "#f3f4f6" }}>
       <aside
         style={{
-          width: 360,
+          width: 380,
           padding: 14,
           borderRight: "1px solid #d1d5db",
           overflowY: "auto",
@@ -786,7 +971,7 @@ export default function App() {
           <input
             type="file"
             onChange={handleAoiFile}
-            disabled={isBusy}
+            disabled={isBusy || !!localExportJobId}
             style={{ width: "100%" }}
           />
 
@@ -847,7 +1032,7 @@ export default function App() {
                   border: "1px solid #d1d5db",
                   background: "#ffffff",
                 }}
-                disabled={isReprojectingAoi}
+                disabled={isReprojectingAoi || !!localExportJobId}
               >
                 {SUPPORTED_SOURCE_CRS.map((crs) => (
                   <option key={crs.code} value={crs.code}>
@@ -859,7 +1044,7 @@ export default function App() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <ActionButton
                   onClick={handleReprojectAndLoadAoi}
-                  disabled={isReprojectingAoi}
+                  disabled={isReprojectingAoi || !!localExportJobId}
                   variant="primary"
                 >
                   {isReprojectingAoi ? "Reprojection..." : "Reprojeter et charger"}
@@ -867,7 +1052,7 @@ export default function App() {
 
                 <ActionButton
                   onClick={clearAoi}
-                  disabled={isBusy}
+                  disabled={isBusy || !!localExportJobId}
                   variant="secondary"
                 >
                   Annuler
@@ -884,7 +1069,7 @@ export default function App() {
             <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
               <ActionButton
                 onClick={clearAoi}
-                disabled={!canClearAoi}
+                disabled={!canClearAoi || !!localExportJobId}
                 variant="danger"
               >
                 Effacer la zone d’étude
@@ -979,7 +1164,7 @@ export default function App() {
                 alignItems: "center",
                 gap: 8,
                 marginBottom: 8,
-                cursor: isBusy ? "not-allowed" : "pointer",
+                cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
                 color: "#111827",
               }}
             >
@@ -988,7 +1173,7 @@ export default function App() {
                 name="selected-product"
                 checked={selectedProduct === "lidar"}
                 onChange={() => handleSelectedProductChange("lidar")}
-                disabled={isBusy}
+                disabled={isBusy || !!localExportJobId}
               />
               LiDAR
             </label>
@@ -998,7 +1183,7 @@ export default function App() {
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                cursor: isBusy ? "not-allowed" : "pointer",
+                cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
                 color: "#111827",
               }}
             >
@@ -1007,7 +1192,7 @@ export default function App() {
                 name="selected-product"
                 checked={selectedProduct === "mnt"}
                 onChange={() => handleSelectedProductChange("mnt")}
-                disabled={isBusy}
+                disabled={isBusy || !!localExportJobId}
               />
               MNT
             </label>
@@ -1024,7 +1209,7 @@ export default function App() {
                 alignItems: "center",
                 gap: 8,
                 marginBottom: 8,
-                cursor: isBusy ? "not-allowed" : "pointer",
+                cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
               }}
             >
               <input
@@ -1032,7 +1217,7 @@ export default function App() {
                 name="selected-year"
                 checked={activeYear === "ALL"}
                 onChange={() => handleYearChange("ALL")}
-                disabled={isBusy}
+                disabled={isBusy || !!localExportJobId}
               />
               Toutes les années
             </label>
@@ -1045,7 +1230,7 @@ export default function App() {
                   alignItems: "center",
                   gap: 8,
                   marginBottom: 8,
-                  cursor: isBusy ? "not-allowed" : "pointer",
+                  cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
                 }}
               >
                 <input
@@ -1053,7 +1238,7 @@ export default function App() {
                   name="selected-year"
                   checked={activeYear === year}
                   onChange={() => handleYearChange(year)}
-                  disabled={isBusy}
+                  disabled={isBusy || !!localExportJobId}
                 />
                 {year}
               </label>
@@ -1068,8 +1253,8 @@ export default function App() {
         </SectionCard>
 
         <SectionCard
-          title="Sélection et export"
-          subtitle="Le résultat courant devient immédiatement exploitable pour la préparation du bundle ZIP."
+          title="Sélection et export navigateur"
+          subtitle="Export direct dans le navigateur pour petits volumes ou inventaire pour gros volumes."
         >
           <div
             style={{
@@ -1087,7 +1272,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <ActionButton
               onClick={handleExport}
-              disabled={!canExport}
+              disabled={!canExport || !!localExportJobId}
               variant="primary"
             >
               {isExporting ? "Export en cours..." : "Exporter (ZIP)"}
@@ -1095,7 +1280,7 @@ export default function App() {
 
             <ActionButton
               onClick={clearSelection}
-              disabled={!canClearSelection}
+              disabled={!canClearSelection || !!localExportJobId}
               variant="secondary"
             >
               Vider la sélection
@@ -1113,6 +1298,59 @@ export default function App() {
               Aucune tuile sélectionnée actuellement pour les filtres actifs.
             </div>
           )}
+        </SectionCard>
+
+        <SectionCard
+          title="Export local (agent)"
+          subtitle="Transfert du travail lourd vers un agent local Windows pour les gros volumes."
+        >
+          <div style={{ display: "grid", gap: 10 }}>
+            <StatusCard tone={isLocalAgentReachable ? "success" : "warning"}>
+              {isLocalAgentReachable
+                ? `Agent connecté : ${localAgentInfo}`
+                : "Agent local non détecté sur http://127.0.0.1:8765"}
+            </StatusCard>
+
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+              Dossier de sortie local
+              <input
+                type="text"
+                value={localOutputDir}
+                onChange={(e) => setLocalOutputDir(e.target.value)}
+                placeholder="C:\\HQ\\exports"
+                style={{
+                  padding: 8,
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  background: "#ffffff",
+                }}
+              />
+            </label>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <ActionButton
+                onClick={handleLocalExport}
+                disabled={!isLocalAgentReachable || !aoi || selectedTiles.length === 0 || !!localExportJobId}
+                variant="primary"
+              >
+                {localExportJobId ? "Export local en cours..." : "Lancer export local"}
+              </ActionButton>
+
+              <ActionButton
+                onClick={handleCancelLocalExport}
+                disabled={!localExportJobId}
+                variant="danger"
+              >
+                Annuler
+              </ActionButton>
+            </div>
+
+            {localExportJobId && (
+              <div style={{ fontSize: 12, color: "#6b7280" }}>
+                Job en cours : <strong>{localExportJobId}</strong>
+              </div>
+            )}
+          </div>
         </SectionCard>
 
         <SectionCard
