@@ -26,6 +26,7 @@ export type LocalAgentJobStatusValue =
 export type LocalAgentJobPhase =
   | "queued"
   | "prepare"
+  | "estimate"
   | "download"
   | "zip"
   | "done"
@@ -38,6 +39,7 @@ export type LocalAgentTile = {
   year?: string | null;
   url?: string | null;
   provider?: string | null;
+  source_attributes?: Record<string, unknown> | null;
 };
 
 export type LocalAgentJobOptions = {
@@ -46,6 +48,8 @@ export type LocalAgentJobOptions = {
   create_zip: boolean;
   keep_downloaded_files: boolean;
   request_timeout_seconds: number;
+  metadata_source_name?: string;
+  metadata_dataset_name?: string | null;
 };
 
 export type LocalAgentCreateJobRequest = {
@@ -72,6 +76,14 @@ export type LocalAgentJobStatus = {
   elapsed_ms: number;
   eta_ms: number;
   avg_speed_mbps?: number | null;
+  bytes_downloaded: number;
+  bytes_total_estimated: number;
+  current_file_bytes_downloaded: number;
+  current_file_bytes_total: number;
+  zip_completed_files: number;
+  zip_total_files: number;
+  zip_bytes_processed: number;
+  zip_bytes_total: number;
   message?: string | null;
   output_dir?: string | null;
   zip_path?: string | null;
@@ -131,6 +143,11 @@ export function mapTilesToLocalAgentTiles(
     const product: LocalAgentProduct =
       t.product === "lidar" || t.product === "mnt" ? t.product : "unknown";
 
+    const rawProperties =
+      tile && typeof tile === "object" && "properties" in tile
+        ? ((tile as { properties?: Record<string, unknown> }).properties ?? null)
+        : null;
+
     return {
       tile_id: t.id,
       name: t.name,
@@ -138,6 +155,7 @@ export function mapTilesToLocalAgentTiles(
       year: t.year ?? null,
       url: t.url ?? null,
       provider: t.provider ?? null,
+      source_attributes: rawProperties,
     };
   });
 }
@@ -167,8 +185,10 @@ export function buildLocalExportJob(params: {
       concurrency: 1,
       retry_count: 1,
       create_zip: true,
-      keep_downloaded_files: true,
+      keep_downloaded_files: false,
       request_timeout_seconds: 120,
+      metadata_source_name: "Gouvernement du Québec",
+      metadata_dataset_name: null,
     },
   };
 }
