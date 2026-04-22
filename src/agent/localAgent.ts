@@ -91,6 +91,24 @@ export type LocalAgentJobStatus = {
   updated_at: string;
 };
 
+export type LocalAgentExportSettings = {
+  outputDir: string;
+  concurrency: number;
+  retryCount: number;
+  requestTimeoutSeconds: number;
+  keepDownloadedFiles: boolean;
+  metadataDatasetName?: string | null;
+};
+
+export const DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS: LocalAgentExportSettings = {
+  outputDir: "C:\\HQ\\exports",
+  concurrency: 3,
+  retryCount: 1,
+  requestTimeoutSeconds: 120,
+  keepDownloadedFiles: false,
+  metadataDatasetName: null,
+};
+
 function ensureOk(res: Response) {
   if (!res.ok) {
     throw new Error(`Agent local HTTP ${res.status}`);
@@ -99,6 +117,21 @@ function ensureOk(res: Response) {
 
 function sanitizeName(name: string) {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+}
+
+function clampConcurrency(value: number) {
+  if (!Number.isFinite(value)) return 3;
+  return Math.max(1, Math.min(8, Math.round(value)));
+}
+
+function clampRetryCount(value: number) {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(5, Math.round(value)));
+}
+
+function clampTimeout(value: number) {
+  if (!Number.isFinite(value)) return 120;
+  return Math.max(10, Math.min(3600, Math.round(value)));
 }
 
 export function buildLocalExportJobId() {
@@ -163,9 +196,9 @@ export function mapTilesToLocalAgentTiles(
 export function buildLocalExportJob(params: {
   aoi: AoiFeature;
   tiles: TileFeature[];
-  outputDir: string;
+  settings: LocalAgentExportSettings;
 }): LocalAgentCreateJobRequest {
-  const { aoi, tiles, outputDir } = params;
+  const { aoi, tiles, settings } = params;
 
   const normalizedProducts = tiles.map((tile) => normalizeTile(tile).product);
   const jobId = buildLocalExportJobId();
@@ -174,7 +207,7 @@ export function buildLocalExportJob(params: {
     job_id: jobId,
     created_at: new Date().toISOString(),
     product: inferAgentProductLabel(normalizedProducts),
-    output_dir: outputDir,
+    output_dir: settings.outputDir,
     zip_name: buildLocalZipName(normalizedProducts, jobId),
     aoi_geojson: {
       type: "FeatureCollection",
@@ -182,13 +215,13 @@ export function buildLocalExportJob(params: {
     },
     tiles: mapTilesToLocalAgentTiles(tiles),
     options: {
-      concurrency: 1,
-      retry_count: 1,
+      concurrency: clampConcurrency(settings.concurrency),
+      retry_count: clampRetryCount(settings.retryCount),
       create_zip: true,
-      keep_downloaded_files: false,
-      request_timeout_seconds: 120,
+      keep_downloaded_files: settings.keepDownloadedFiles,
+      request_timeout_seconds: clampTimeout(settings.requestTimeoutSeconds),
       metadata_source_name: "Gouvernement du Québec",
-      metadata_dataset_name: null,
+      metadata_dataset_name: settings.metadataDatasetName ?? null,
     },
   };
 }

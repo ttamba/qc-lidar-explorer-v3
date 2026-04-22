@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import MapView from "./map/MapView";
 import Basket from "./ui/Basket";
 import type { TileFeature, AoiFeature } from "./types";
@@ -22,7 +29,9 @@ import {
   getLocalExportJobStatus,
   cancelLocalExportJob,
   buildLocalExportJob,
+  DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
   type LocalAgentJobStatus,
+  type LocalAgentExportSettings,
 } from "./agent/localAgent";
 
 type Dataset = "lidar" | "mnt";
@@ -84,6 +93,20 @@ function formatDuration(ms?: number) {
 
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes} min ${seconds}s`;
+}
+
+function formatBytes(bytes?: number) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes <= 0) return "—";
+  const units = ["B", "Ko", "Mo", "Go", "To"];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function getStatusCardStyle(tone: StatusTone): CSSProperties {
@@ -268,7 +291,7 @@ function ExportProgressCard(props: {
       ? "ZIP complet avec tuiles"
       : state.mode === "inventory-only"
         ? "ZIP d’inventaire + liens"
-        : "—";
+        : "Agent local";
 
   return (
     <div
@@ -416,6 +439,7 @@ export default function App() {
     lidar: [],
     mnt: [],
   });
+
   const [loadingAoi, setLoadingAoi] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string>("");
@@ -424,7 +448,9 @@ export default function App() {
   const [isLocalAgentReachable, setIsLocalAgentReachable] = useState<boolean | null>(null);
   const [localAgentInfo, setLocalAgentInfo] = useState<string>("");
   const [localExportJobId, setLocalExportJobId] = useState<string | null>(null);
-  const [localOutputDir, setLocalOutputDir] = useState<string>("C:\\HQ\\exports");
+  const [localAgentSettings, setLocalAgentSettings] = useState<LocalAgentExportSettings>(
+    DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS
+  );
 
   const activeYears =
     selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
@@ -472,8 +498,7 @@ export default function App() {
     if (isExporting) {
       return {
         tone: "info" as StatusTone,
-        message:
-          exportUi.message ?? "Préparation du bundle d’export en cours…",
+        message: exportUi.message ?? "Préparation du bundle d’export en cours…",
       };
     }
 
@@ -554,33 +579,54 @@ export default function App() {
         const status: LocalAgentJobStatus = await getLocalExportJobStatus(localExportJobId);
         if (cancelled) return;
 
+        const phase =
+          status.phase === "queued" || status.phase === "prepare" || status.phase === "estimate"
+            ? "download"
+            : status.phase === "download"
+              ? "download"
+              : status.phase === "zip"
+                ? "zip"
+                : status.phase === "done"
+                  ? "done"
+                  : "error";
+
+        const extraMessageParts: string[] = [];
+        if (status.bytes_downloaded > 0) {
+          extraMessageParts.push(
+            `Téléchargé : ${formatBytes(status.bytes_downloaded)}`
+          );
+        }
+        if (status.bytes_total_estimated > 0) {
+          extraMessageParts.push(
+            `Estimé : ${formatBytes(status.bytes_total_estimated)}`
+          );
+        }
+        if (typeof status.avg_speed_mbps === "number") {
+          extraMessageParts.push(`Débit moyen : ${status.avg_speed_mbps} Mb/s`);
+        }
+
         setExportUi({
           isOpen: true,
-          phase:
-            status.phase === "queued" || status.phase === "prepare"
-              ? "download"
-              : status.phase === "download"
-                ? "download"
-                : status.phase === "zip"
-                  ? "zip"
-                  : status.phase === "done"
-                    ? "done"
-                    : "error",
+          phase,
           percent: status.percent,
           completed: status.completed,
           total: status.total,
           currentFile: status.current_file ?? undefined,
           message:
             status.message ??
-            (status.phase === "zip"
+            (phase === "zip"
               ? "Création du ZIP final…"
               : "Téléchargement local en cours…"),
           downloadedCount: status.downloaded_count,
           failedCount: status.failed_count,
           elapsedMs: status.elapsed_ms,
           etaMs: status.eta_ms,
-          mode: "inline-zip",
+          mode: undefined,
         });
+
+        if (extraMessageParts.length > 0 && status.status === "running") {
+          setInfoMessage(extraMessageParts.join(" · "));
+        }
 
         if (
           status.status === "completed" ||
@@ -620,6 +666,15 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [localExportJobId]);
+
+  function updateLocalAgentSettings(
+    patch: Partial<LocalAgentExportSettings>
+  ) {
+    setLocalAgentSettings((prev) => ({
+      ...prev,
+      ...patch,
+    }));
+  }
 
   async function handleAoiFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -823,7 +878,7 @@ export default function App() {
       const job = buildLocalExportJob({
         aoi,
         tiles: selectedTiles,
-        outputDir: localOutputDir,
+        settings: localAgentSettings,
       });
 
       setExportUi({
@@ -838,7 +893,7 @@ export default function App() {
         failedCount: 0,
         elapsedMs: 0,
         etaMs: undefined,
-        mode: "inline-zip",
+        mode: undefined,
       });
 
       const created = await createLocalExportJob(job);
@@ -863,7 +918,7 @@ export default function App() {
         failedCount: 0,
         elapsedMs: 0,
         etaMs: 0,
-        mode: "inline-zip",
+        mode: undefined,
       });
     }
   }
@@ -887,7 +942,7 @@ export default function App() {
     <div style={{ display: "flex", height: "100vh", background: "#f3f4f6" }}>
       <aside
         style={{
-          width: 380,
+          width: 400,
           padding: 14,
           borderRight: "1px solid #d1d5db",
           overflowY: "auto",
@@ -1315,8 +1370,8 @@ export default function App() {
               Dossier de sortie local
               <input
                 type="text"
-                value={localOutputDir}
-                onChange={(e) => setLocalOutputDir(e.target.value)}
+                value={localAgentSettings.outputDir}
+                onChange={(e) => updateLocalAgentSettings({ outputDir: e.target.value })}
                 placeholder="C:\\HQ\\exports"
                 style={{
                   padding: 8,
@@ -1327,10 +1382,151 @@ export default function App() {
               />
             </label>
 
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+                Concurrence
+                <select
+                  value={localAgentSettings.concurrency}
+                  onChange={(e) =>
+                    updateLocalAgentSettings({ concurrency: Number(e.target.value) })
+                  }
+                  style={{
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    background: "#ffffff",
+                  }}
+                  disabled={!!localExportJobId}
+                >
+                  <option value={1}>1 — très prudent</option>
+                  <option value={2}>2 — prudent</option>
+                  <option value={3}>3 — recommandé</option>
+                  <option value={4}>4 — rapide</option>
+                  <option value={5}>5 — agressif</option>
+                  <option value={6}>6 — agressif+</option>
+                </select>
+              </label>
+
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+                Retries
+                <select
+                  value={localAgentSettings.retryCount}
+                  onChange={(e) =>
+                    updateLocalAgentSettings({ retryCount: Number(e.target.value) })
+                  }
+                  style={{
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    background: "#ffffff",
+                  }}
+                  disabled={!!localExportJobId}
+                >
+                  <option value={0}>0</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                </select>
+              </label>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+              }}
+            >
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+                Timeout (s)
+                <input
+                  type="number"
+                  min={10}
+                  max={3600}
+                  value={localAgentSettings.requestTimeoutSeconds}
+                  onChange={(e) =>
+                    updateLocalAgentSettings({
+                      requestTimeoutSeconds: Number(e.target.value),
+                    })
+                  }
+                  style={{
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    background: "#ffffff",
+                  }}
+                  disabled={!!localExportJobId}
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+                Jeu de données
+                <input
+                  type="text"
+                  value={localAgentSettings.metadataDatasetName ?? ""}
+                  onChange={(e) =>
+                    updateLocalAgentSettings({
+                      metadataDatasetName: e.target.value || null,
+                    })
+                  }
+                  placeholder="Ex. LiDAR Québec 2021"
+                  style={{
+                    padding: 8,
+                    borderRadius: 8,
+                    border: "1px solid #d1d5db",
+                    background: "#ffffff",
+                  }}
+                  disabled={!!localExportJobId}
+                />
+              </label>
+            </div>
+
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 12,
+                color: "#374151",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={localAgentSettings.keepDownloadedFiles}
+                onChange={(e) =>
+                  updateLocalAgentSettings({
+                    keepDownloadedFiles: e.target.checked,
+                  })
+                }
+                disabled={!!localExportJobId}
+              />
+              Conserver aussi les fichiers intermédiaires sur disque
+            </label>
+
+            <StatusCard tone="info">
+              Réglage actuel : concurrence <strong>{localAgentSettings.concurrency}</strong>,
+              retries <strong>{localAgentSettings.retryCount}</strong>, timeout{" "}
+              <strong>{localAgentSettings.requestTimeoutSeconds}s</strong>, livrable{" "}
+              <strong>
+                {localAgentSettings.keepDownloadedFiles ? "ZIP + fichiers locaux" : "ZIP seul"}
+              </strong>.
+            </StatusCard>
+
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <ActionButton
                 onClick={handleLocalExport}
-                disabled={!isLocalAgentReachable || !aoi || selectedTiles.length === 0 || !!localExportJobId}
+                disabled={
+                  !isLocalAgentReachable ||
+                  !aoi ||
+                  selectedTiles.length === 0 ||
+                  !!localExportJobId
+                }
                 variant="primary"
               >
                 {localExportJobId ? "Export local en cours..." : "Lancer export local"}
