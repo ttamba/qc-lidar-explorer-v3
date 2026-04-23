@@ -39,6 +39,10 @@ type AvailableYears = { lidar: string[]; mnt: string[] };
 type YearFilter = { lidar: string | "ALL"; mnt: string | "ALL" };
 type StatusTone = "info" | "success" | "warning" | "error";
 
+type LocalAgentUiSettings = LocalAgentExportSettings & {
+  packageMode?: "lean" | "full";
+};
+
 type ExportUiState = {
   isOpen: boolean;
   phase: "idle" | "download" | "zip" | "done" | "error";
@@ -448,9 +452,10 @@ export default function App() {
   const [isLocalAgentReachable, setIsLocalAgentReachable] = useState<boolean | null>(null);
   const [localAgentInfo, setLocalAgentInfo] = useState<string>("");
   const [localExportJobId, setLocalExportJobId] = useState<string | null>(null);
-  const [localAgentSettings, setLocalAgentSettings] = useState<LocalAgentExportSettings>(
-    DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS
-  );
+  const [localAgentSettings, setLocalAgentSettings] = useState<LocalAgentUiSettings>({
+    ...DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
+    packageMode: "lean",
+  });
 
   const activeYears =
     selectedProduct === "lidar" ? availableYears.lidar : availableYears.mnt;
@@ -482,33 +487,20 @@ export default function App() {
 
   const statusSummary = useMemo(() => {
     if (loadingAoi) {
-      return {
-        tone: "info" as StatusTone,
-        message: "Chargement de la zone d’étude en cours…",
-      };
+      return { tone: "info" as StatusTone, message: "Chargement de la zone d’étude en cours…" };
     }
-
     if (isReprojectingAoi) {
-      return {
-        tone: "info" as StatusTone,
-        message: "Reprojection automatique de l’AOI en cours…",
-      };
+      return { tone: "info" as StatusTone, message: "Reprojection automatique de l’AOI en cours…" };
     }
-
     if (isExporting) {
       return {
         tone: "info" as StatusTone,
         message: exportUi.message ?? "Préparation du bundle d’export en cours…",
       };
     }
-
     if (aoiError) {
-      return {
-        tone: "error" as StatusTone,
-        message: aoiError,
-      };
+      return { tone: "error" as StatusTone, message: aoiError };
     }
-
     if (hasPendingReprojection) {
       return {
         tone: "warning" as StatusTone,
@@ -516,21 +508,15 @@ export default function App() {
           "Une AOI projetée a été détectée. Vérifiez le SCR source puis lancez la reprojection vers WGS84.",
       };
     }
-
     if (infoMessage) {
-      return {
-        tone: "success" as StatusTone,
-        message: infoMessage,
-      };
+      return { tone: "success" as StatusTone, message: infoMessage };
     }
-
     if (hasAoi) {
       return {
         tone: "success" as StatusTone,
         message: "Zone d’étude chargée. La carte est prête pour l’exploration.",
       };
     }
-
     return {
       tone: "info" as StatusTone,
       message:
@@ -592,14 +578,10 @@ export default function App() {
 
         const extraMessageParts: string[] = [];
         if (status.bytes_downloaded > 0) {
-          extraMessageParts.push(
-            `Téléchargé : ${formatBytes(status.bytes_downloaded)}`
-          );
+          extraMessageParts.push(`Téléchargé : ${formatBytes(status.bytes_downloaded)}`);
         }
         if (status.bytes_total_estimated > 0) {
-          extraMessageParts.push(
-            `Estimé : ${formatBytes(status.bytes_total_estimated)}`
-          );
+          extraMessageParts.push(`Estimé : ${formatBytes(status.bytes_total_estimated)}`);
         }
         if (typeof status.avg_speed_mbps === "number") {
           extraMessageParts.push(`Débit moyen : ${status.avg_speed_mbps} Mb/s`);
@@ -667,9 +649,7 @@ export default function App() {
     };
   }, [localExportJobId]);
 
-  function updateLocalAgentSettings(
-    patch: Partial<LocalAgentExportSettings>
-  ) {
+  function updateLocalAgentSettings(patch: Partial<LocalAgentUiSettings>) {
     setLocalAgentSettings((prev) => ({
       ...prev,
       ...patch,
@@ -708,14 +688,18 @@ export default function App() {
           setAoi(null);
           setSelectedTiles([]);
           setAvailableYears({ lidar: [], mnt: [] });
-          setPendingAoiRaw(geo as Record<string, unknown>);
+          setPendingAoiRaw(geo);
           setPendingAoiFileName(file.name);
           setDetectedSourceCrs(detected);
           setSelectedSourceCrs(detected ?? "EPSG:32188");
           setAoiError(
             detected
-              ? `${message}\n\nCRS suggéré automatiquement : ${detected}. Vérifiez au besoin puis lancez la reprojection vers WGS84.`
-              : `${message}\n\nLe fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une reprojection automatique vers WGS84.`
+              ? `${message}
+
+CRS suggéré automatiquement : ${detected}. Vérifiez au besoin puis lancez la reprojection vers WGS84.`
+              : `${message}
+
+Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une reprojection automatique vers WGS84.`
           );
           return;
         }
@@ -1036,6 +1020,18 @@ export default function App() {
             </StatusCard>
           )}
 
+          {!pendingAoiRaw && (
+            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <ActionButton
+                onClick={clearAoi}
+                disabled={!canClearAoi || !!localExportJobId}
+                variant="danger"
+              >
+                Effacer la zone d’étude
+              </ActionButton>
+            </div>
+          )}
+
           {pendingAoiRaw && (
             <div
               style={{
@@ -1119,91 +1115,6 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {!pendingAoiRaw && (
-            <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <ActionButton
-                onClick={clearAoi}
-                disabled={!canClearAoi || !!localExportJobId}
-                variant="danger"
-              >
-                Effacer la zone d’étude
-              </ActionButton>
-            </div>
-          )}
-
-          {!hasAoi && !loadingAoi && !aoiError && !pendingAoiRaw && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-              Aucune zone d’étude chargée pour le moment.
-            </div>
-          )}
-
-          {hasAoi && !aoiError && !pendingAoiRaw && (
-            <StatusCard tone="success">Zone d’étude chargée et validée.</StatusCard>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          title="Parcours de démonstration"
-          subtitle="Lecture simple en quatre étapes pour un échange client fluide."
-        >
-          <div style={{ display: "grid", gap: 8 }}>
-            <div
-              style={{
-                padding: "10px 12px",
-                borderRadius: 10,
-                border: "1px solid #e5e7eb",
-                background: "#f9fafb",
-                fontSize: 12,
-                lineHeight: 1.45,
-                color: "#374151",
-              }}
-            >
-              <strong style={{ color: "#111827" }}>1. Charger</strong> la zone d’étude.
-            </div>
-
-            <div
-              style={{
-                padding: "10px 12px",
-                borderRadius: 10,
-                border: "1px solid #e5e7eb",
-                background: "#f9fafb",
-                fontSize: 12,
-                lineHeight: 1.45,
-                color: "#374151",
-              }}
-            >
-              <strong style={{ color: "#111827" }}>2. Lire</strong> la couverture visible, les années disponibles et la sélection.
-            </div>
-
-            <div
-              style={{
-                padding: "10px 12px",
-                borderRadius: 10,
-                border: "1px solid #e5e7eb",
-                background: "#f9fafb",
-                fontSize: 12,
-                lineHeight: 1.45,
-                color: "#374151",
-              }}
-            >
-              <strong style={{ color: "#111827" }}>3. Affiner</strong> au besoin par produit ou par année.
-            </div>
-
-            <div
-              style={{
-                padding: "10px 12px",
-                borderRadius: 10,
-                border: "1px solid #e5e7eb",
-                background: "#f9fafb",
-                fontSize: 12,
-                lineHeight: 1.45,
-                color: "#374151",
-              }}
-            >
-              <strong style={{ color: "#111827" }}>4. Exporter</strong> le panier final.
-            </div>
-          </div>
         </SectionCard>
 
         <SectionCard
@@ -1213,16 +1124,7 @@ export default function App() {
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontWeight: 700, marginBottom: 8, color: "#111827" }}>Produit actif</div>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
-                color: "#111827",
-              }}
-            >
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <input
                 type="radio"
                 name="selected-product"
@@ -1233,15 +1135,7 @@ export default function App() {
               LiDAR
             </label>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
-                color: "#111827",
-              }}
-            >
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <input
                 type="radio"
                 name="selected-product"
@@ -1258,15 +1152,7 @@ export default function App() {
               {selectedProduct === "lidar" ? "LiDAR" : "MNT"} — année
             </div>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
-              }}
-            >
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <input
                 type="radio"
                 name="selected-year"
@@ -1278,16 +1164,7 @@ export default function App() {
             </label>
 
             {activeYears.map((year) => (
-              <label
-                key={year}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 8,
-                  cursor: isBusy || !!localExportJobId ? "not-allowed" : "pointer",
-                }}
-              >
+              <label key={year} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <input
                   type="radio"
                   name="selected-year"
@@ -1311,14 +1188,7 @@ export default function App() {
           title="Sélection et export navigateur"
           subtitle="Export direct dans le navigateur pour petits volumes ou inventaire pour gros volumes."
         >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
-              gap: 8,
-              marginBottom: 12,
-            }}
-          >
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
             <SmallStat label="Total" value={totalSelectionCount} />
             <SmallStat label="LiDAR" value={lidarCount} />
             <SmallStat label="MNT" value={mntCount} />
@@ -1341,18 +1211,6 @@ export default function App() {
               Vider la sélection
             </ActionButton>
           </div>
-
-          {!hasAoi && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-              Chargez d’abord une zone d’étude pour activer une sélection exploitable.
-            </div>
-          )}
-
-          {hasAoi && totalSelectionCount === 0 && !isBusy && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
-              Aucune tuile sélectionnée actuellement pour les filtres actifs.
-            </div>
-          )}
         </SectionCard>
 
         <SectionCard
@@ -1372,7 +1230,7 @@ export default function App() {
                 type="text"
                 value={localAgentSettings.outputDir}
                 onChange={(e) => updateLocalAgentSettings({ outputDir: e.target.value })}
-                placeholder="C:\\HQ\\exports"
+                placeholder="C:\HQ\exports"
                 style={{
                   padding: 8,
                   borderRadius: 8,
@@ -1382,20 +1240,12 @@ export default function App() {
               />
             </label>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 10,
-              }}
-            >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
                 Concurrence
                 <select
                   value={localAgentSettings.concurrency}
-                  onChange={(e) =>
-                    updateLocalAgentSettings({ concurrency: Number(e.target.value) })
-                  }
+                  onChange={(e) => updateLocalAgentSettings({ concurrency: Number(e.target.value) })}
                   style={{
                     padding: 8,
                     borderRadius: 8,
@@ -1417,9 +1267,7 @@ export default function App() {
                 Retries
                 <select
                   value={localAgentSettings.retryCount}
-                  onChange={(e) =>
-                    updateLocalAgentSettings({ retryCount: Number(e.target.value) })
-                  }
+                  onChange={(e) => updateLocalAgentSettings({ retryCount: Number(e.target.value) })}
                   style={{
                     padding: 8,
                     borderRadius: 8,
@@ -1436,13 +1284,7 @@ export default function App() {
               </label>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 10,
-              }}
-            >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
                 Timeout (s)
                 <input
@@ -1451,9 +1293,7 @@ export default function App() {
                   max={3600}
                   value={localAgentSettings.requestTimeoutSeconds}
                   onChange={(e) =>
-                    updateLocalAgentSettings({
-                      requestTimeoutSeconds: Number(e.target.value),
-                    })
+                    updateLocalAgentSettings({ requestTimeoutSeconds: Number(e.target.value) })
                   }
                   style={{
                     padding: 8,
@@ -1471,9 +1311,7 @@ export default function App() {
                   type="text"
                   value={localAgentSettings.metadataDatasetName ?? ""}
                   onChange={(e) =>
-                    updateLocalAgentSettings({
-                      metadataDatasetName: e.target.value || null,
-                    })
+                    updateLocalAgentSettings({ metadataDatasetName: e.target.value || null })
                   }
                   placeholder="Ex. LiDAR Québec 2021"
                   style={{
@@ -1487,22 +1325,32 @@ export default function App() {
               </label>
             </div>
 
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontSize: 12,
-                color: "#374151",
-              }}
-            >
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+              Mode de packaging
+              <select
+                value={localAgentSettings.packageMode ?? "lean"}
+                onChange={(e) =>
+                  updateLocalAgentSettings({ packageMode: e.target.value as "lean" | "full" })
+                }
+                style={{
+                  padding: 8,
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  background: "#ffffff",
+                }}
+                disabled={!!localExportJobId}
+              >
+                <option value="lean">Livrable (rapide)</option>
+                <option value="full">Complet (debug)</option>
+              </select>
+            </label>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#374151" }}>
               <input
                 type="checkbox"
                 checked={localAgentSettings.keepDownloadedFiles}
                 onChange={(e) =>
-                  updateLocalAgentSettings({
-                    keepDownloadedFiles: e.target.checked,
-                  })
+                  updateLocalAgentSettings({ keepDownloadedFiles: e.target.checked })
                 }
                 disabled={!!localExportJobId}
               />
@@ -1512,21 +1360,15 @@ export default function App() {
             <StatusCard tone="info">
               Réglage actuel : concurrence <strong>{localAgentSettings.concurrency}</strong>,
               retries <strong>{localAgentSettings.retryCount}</strong>, timeout{" "}
-              <strong>{localAgentSettings.requestTimeoutSeconds}s</strong>, livrable{" "}
-              <strong>
-                {localAgentSettings.keepDownloadedFiles ? "ZIP + fichiers locaux" : "ZIP seul"}
-              </strong>.
+              <strong>{localAgentSettings.requestTimeoutSeconds}s</strong>, packaging{" "}
+              <strong>{localAgentSettings.packageMode ?? "lean"}</strong>, livrable{" "}
+              <strong>{localAgentSettings.keepDownloadedFiles ? "ZIP + fichiers locaux" : "ZIP seul"}</strong>.
             </StatusCard>
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <ActionButton
                 onClick={handleLocalExport}
-                disabled={
-                  !isLocalAgentReachable ||
-                  !aoi ||
-                  selectedTiles.length === 0 ||
-                  !!localExportJobId
-                }
+                disabled={!isLocalAgentReachable || !aoi || selectedTiles.length === 0 || !!localExportJobId}
                 variant="primary"
               >
                 {localExportJobId ? "Export local en cours..." : "Lancer export local"}
