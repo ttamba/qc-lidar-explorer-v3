@@ -1,9 +1,10 @@
 import type { AoiFeature, TileFeature } from "../types";
 
-const LOCAL_AGENT_BASE_URL = "http://127.0.0.1:8765";
+export const LOCAL_AGENT_BASE_URL = "http://127.0.0.1:8765";
 
 export type LocalAgentOutputMode = "zip" | "folder";
 export type LocalAgentPackageMode = "lean" | "full";
+export type LocalAgentProduct = "lidar" | "mnt" | "orthophoto" | "mixed" | "unknown";
 
 export type LocalAgentExportSettings = {
   outputDir: string;
@@ -72,30 +73,42 @@ export type LocalAgentJobStatus = {
 };
 
 export type LocalAgentTilePayload = {
-  id?: string;
-  url: string;
-  filename?: string;
-  product?: string;
-  year?: string | number;
-  properties?: Record<string, unknown>;
+  tile_id: string;
+  name: string;
+  product: LocalAgentProduct;
+  year?: string | null;
+  url?: string | null;
+  provider?: string | null;
+  source_attributes?: Record<string, unknown> | null;
+};
+
+export type LocalAgentJobOptions = {
+  concurrency: number;
+  retry_count: number;
+  create_zip: boolean;
+  keep_downloaded_files: boolean;
+  request_timeout_seconds: number;
+  metadata_source_name: string;
+  metadata_dataset_name: string | null;
+  package_mode: LocalAgentPackageMode;
+  output_mode?: LocalAgentOutputMode;
 };
 
 export type LocalAgentExportJob = {
-  aoi: AoiFeature;
+  job_id: string;
+  created_at: string;
+  product: LocalAgentProduct;
+  output_dir: string;
+  zip_name: string;
+  aoi_geojson: Record<string, unknown>;
   tiles: LocalAgentTilePayload[];
-  settings: LocalAgentExportSettings;
-  outputDir: string;
-  concurrency: number;
-  retryCount: number;
-  requestTimeoutSeconds: number;
-  metadataDatasetName: string | null;
-  keepDownloadedFiles: boolean;
-  packageMode: LocalAgentPackageMode;
-  outputMode: LocalAgentOutputMode;
+  options: LocalAgentJobOptions;
 };
 
 export type LocalAgentCreateJobResponse = {
   job_id: string;
+  status?: LocalAgentJobState;
+  phase?: LocalAgentJobPhase;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -113,12 +126,62 @@ function numberValue(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function sanitizeName(name: string) {
+  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+}
+
+function clamp(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function buildLocalExportJobId() {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  return `job-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
+    now.getDate()
+  )}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+function inferProductFromTiles(tiles: LocalAgentTilePayload[]): LocalAgentProduct {
+  const products = new Set(
+    tiles
+      .map((tile) => tile.product)
+      .filter((product): product is "lidar" | "mnt" => product === "lidar" || product === "mnt")
+  );
+
+  if (products.size === 1) {
+    if (products.has("lidar")) return "lidar";
+    if (products.has("mnt")) return "mnt";
+  }
+
+  if (products.size > 1) return "mixed";
+  return "unknown";
+}
+
+function buildLocalZipName(product: LocalAgentProduct, jobId: string) {
+  return sanitizeName(`qc_${product}_bundle_${jobId}.zip`);
+}
+
+function normalizeProduct(value: unknown): LocalAgentProduct {
+  const text = stringValue(value)?.toLowerCase();
+
+  if (text === "lidar") return "lidar";
+  if (text === "mnt") return "mnt";
+  if (text === "orthophoto") return "orthophoto";
+
+  return "unknown";
+}
+
 function normalizeTile(tile: TileFeature): LocalAgentTilePayload {
   const props = asRecord(tile.properties);
 
   const url =
+    stringValue(props.normalized_url) ??
     stringValue(props.url) ??
     stringValue(props.URL) ??
+    stringValue(props.TELECHARGEMENT_TUILE) ??
     stringValue(props.download_url) ??
     stringValue(props.downloadUrl) ??
     stringValue(props.href) ??
@@ -128,28 +191,46 @@ function normalizeTile(tile: TileFeature): LocalAgentTilePayload {
     throw new Error("Une tuile sélectionnée ne contient pas d’URL de téléchargement.");
   }
 
+  const tileId =
+    stringValue(props.normalized_id) ??
+    stringValue(props.tile_id) ??
+    stringValue(props.id) ??
+    stringValue(props.ID) ??
+    stringValue(props.NOM_TUILE) ??
+    stringValue(props.tuile) ??
+    stringValue((tile as unknown as Record<string, unknown>).id) ??
+    "tile";
+
+  const name =
+    stringValue(props.normalized_name) ??
+    stringValue(props.NOM_TUILE) ??
+    stringValue(props.filename) ??
+    stringValue(props.file_name) ??
+    stringValue(props.nom_fichier) ??
+    stringValue(props.name) ??
+    tileId;
+
+  const product = normalizeProduct(
+    props.normalized_product ?? props.product ?? props.PRODUIT ?? props.type_produit
+  );
+
   return {
-    id:
-      stringValue(props.id) ??
-      stringValue(props.ID) ??
-      stringValue(props.tile_id) ??
-      stringValue(props.tuile),
-    url,
-    filename:
-      stringValue(props.filename) ??
-      stringValue(props.file_name) ??
-      stringValue(props.nom_fichier) ??
-      stringValue(props.name),
-    product:
-      stringValue(props.normalized_product) ??
-      stringValue(props.product) ??
-      stringValue(props.PRODUIT) ??
-      stringValue(props.type_produit),
+    tile_id: tileId,
+    name,
+    product,
     year:
+      stringValue(props.normalized_year) ??
       stringValue(props.year) ??
       stringValue(props.annee) ??
-      stringValue(props.millesime),
-    properties: props,
+      stringValue(props.millesime) ??
+      null,
+    url,
+    provider:
+      stringValue(props.normalized_provider) ??
+      stringValue(props.provider) ??
+      stringValue(props.PROVIDER) ??
+      "QC",
+    source_attributes: props,
   };
 }
 
@@ -167,7 +248,7 @@ export async function pingLocalAgent(): Promise<LocalAgentHealth> {
   const data = await parseJsonResponse<Record<string, unknown>>(response);
 
   return {
-    ok: Boolean(data.ok ?? true),
+    ok: data.ok === undefined ? data.status === "ok" : Boolean(data.ok),
     service: String(data.service ?? data.agent ?? "QC LiDAR / MNT Local Agent"),
     version: String(data.version ?? "unknown"),
   };
@@ -180,26 +261,35 @@ export function buildLocalExportJob(args: {
 }): LocalAgentExportJob {
   const outputMode = args.settings.outputMode ?? "zip";
   const packageMode = args.settings.packageMode ?? "lean";
+  const localTiles = args.tiles.map(normalizeTile);
+  const product = inferProductFromTiles(localTiles);
+  const jobId = buildLocalExportJobId();
+
+  const keepDownloadedFiles =
+    outputMode === "folder" ? true : Boolean(args.settings.keepDownloadedFiles);
 
   return {
-    aoi: args.aoi,
-    tiles: args.tiles.map(normalizeTile),
-    settings: {
-      ...args.settings,
-      outputMode,
-      packageMode,
-      keepDownloadedFiles:
-        outputMode === "folder" ? true : Boolean(args.settings.keepDownloadedFiles),
+    job_id: jobId,
+    created_at: new Date().toISOString(),
+    product,
+    output_dir: args.settings.outputDir,
+    zip_name: buildLocalZipName(product, jobId),
+    aoi_geojson: {
+      type: "FeatureCollection",
+      features: [args.aoi],
     },
-    outputDir: args.settings.outputDir,
-    concurrency: args.settings.concurrency,
-    retryCount: args.settings.retryCount,
-    requestTimeoutSeconds: args.settings.requestTimeoutSeconds,
-    metadataDatasetName: args.settings.metadataDatasetName,
-    keepDownloadedFiles:
-      outputMode === "folder" ? true : Boolean(args.settings.keepDownloadedFiles),
-    packageMode,
-    outputMode,
+    tiles: localTiles,
+    options: {
+      concurrency: clamp(args.settings.concurrency, 1, 8, 3),
+      retry_count: clamp(args.settings.retryCount, 0, 5, 1),
+      create_zip: outputMode === "zip",
+      keep_downloaded_files: keepDownloadedFiles,
+      request_timeout_seconds: clamp(args.settings.requestTimeoutSeconds, 10, 3600, 180),
+      metadata_source_name: "Gouvernement du Québec",
+      metadata_dataset_name: args.settings.metadataDatasetName ?? null,
+      package_mode: packageMode,
+      output_mode: outputMode,
+    },
   };
 }
 
@@ -209,29 +299,16 @@ export async function createLocalExportJob(
   const response = await fetch(`${LOCAL_AGENT_BASE_URL}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      aoi: job.aoi,
-      tiles: job.tiles,
-      output_dir: job.outputDir,
-      outputDir: job.outputDir,
-      concurrency: job.concurrency,
-      retry_count: job.retryCount,
-      retryCount: job.retryCount,
-      request_timeout_seconds: job.requestTimeoutSeconds,
-      requestTimeoutSeconds: job.requestTimeoutSeconds,
-      metadata_dataset_name: job.metadataDatasetName,
-      metadataDatasetName: job.metadataDatasetName,
-      keep_downloaded_files: job.keepDownloadedFiles,
-      keepDownloadedFiles: job.keepDownloadedFiles,
-      packageMode: job.packageMode,
-      package_mode: job.packageMode,
-      outputMode: job.outputMode,
-      output_mode: job.outputMode,
-      include_debug_files: false,
-    }),
+    body: JSON.stringify(job),
   });
 
-  return parseJsonResponse<LocalAgentCreateJobResponse>(response);
+  const data = await parseJsonResponse<Record<string, unknown>>(response);
+
+  return {
+    job_id: stringValue(data.job_id) ?? stringValue(data.jobId) ?? job.job_id,
+    status: stringValue(data.status) as LocalAgentJobState | undefined,
+    phase: stringValue(data.phase) as LocalAgentJobPhase | undefined,
+  };
 }
 
 export async function getLocalExportJobStatus(jobId: string): Promise<LocalAgentJobStatus> {
@@ -275,9 +352,12 @@ export async function getLocalExportJobStatus(jobId: string): Promise<LocalAgent
 }
 
 export async function cancelLocalExportJob(jobId: string): Promise<void> {
-  const response = await fetch(`${LOCAL_AGENT_BASE_URL}/jobs/${encodeURIComponent(jobId)}`, {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    `${LOCAL_AGENT_BASE_URL}/jobs/${encodeURIComponent(jobId)}/cancel`,
+    {
+      method: "POST",
+    }
+  );
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");

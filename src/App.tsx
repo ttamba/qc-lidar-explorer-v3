@@ -864,12 +864,10 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
      const job = buildLocalExportJob({
 		aoi,
 		tiles: selectedTiles,
-		settings: {
-			...localAgentSettings,
-			outputMode: localAgentSettings.outputMode ?? "zip",
-			keepDownloadedFiles: localAgentSettings.outputMode === "folder",
-		  },
+		settings: localAgentSettings,			
 		});
+		
+	await createLocalExportJob(job);
 	  
       setExportUi({
         isOpen: true,
