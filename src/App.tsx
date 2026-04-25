@@ -426,6 +426,7 @@ export default function App() {
   const [selectedTiles, setSelectedTiles] = useState<TileFeature[]>([]);
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
+  const [isStartingLocalExport, setIsStartingLocalExport] = useState(false);
 
   const [pendingAoiRaw, setPendingAoiRaw] = useState<Record<string, unknown> | null>(null);
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
@@ -852,23 +853,26 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
   }
 
   async function handleLocalExport() {
+    if (isStartingLocalExport || localExportJobId) return;
+
     if (!aoi || selectedTiles.length === 0) {
       window.alert("Aucune AOI ou aucune tuile sélectionnée.");
       return;
     }
 
+    const job = buildLocalExportJob({
+      aoi,
+      tiles: selectedTiles,
+      settings: localAgentSettings,
+    });
+
     try {
+      setIsStartingLocalExport(true);
+      setLocalExportJobId(job.job_id);
+
       setInfoMessage("");
       setAoiError("");
 
-     const job = buildLocalExportJob({
-		aoi,
-		tiles: selectedTiles,
-		settings: localAgentSettings,			
-		});
-		
-	await createLocalExportJob(job);
-	  
       setExportUi({
         isOpen: true,
         phase: "download",
@@ -886,14 +890,18 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
 
       const created = await createLocalExportJob(job);
       setLocalExportJobId(created.job_id);
+
       setInfoMessage("Job d’export local lancé.");
     } catch (error) {
+      setLocalExportJobId(null);
+
       const message =
         error instanceof Error
           ? error.message
           : "Impossible de démarrer l’export local.";
 
       setAoiError(message);
+
       setExportUi({
         isOpen: true,
         phase: "error",
@@ -908,6 +916,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
         etaMs: 0,
         mode: undefined,
       });
+    } finally {
+      setIsStartingLocalExport(false);
     }
   }
 
@@ -1234,7 +1244,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 type="text"
                 value={localAgentSettings.outputDir}
                 onChange={(e) => updateLocalAgentSettings({ outputDir: e.target.value })}
-                placeholder="C:\HQ\exports"
+                placeholder="C:\\HQ\\exports"
                 style={{
                   padding: 8,
                   borderRadius: 8,
@@ -1396,10 +1406,10 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <ActionButton
                 onClick={handleLocalExport}
-                disabled={!isLocalAgentReachable || !aoi || selectedTiles.length === 0 || !!localExportJobId}
+                disabled={!isLocalAgentReachable || !aoi || selectedTiles.length === 0 || !!localExportJobId || isStartingLocalExport}
                 variant="primary"
               >
-                {localExportJobId ? "Export local en cours..." : "Lancer export local"}
+                {localExportJobId || isStartingLocalExport ? "Export local en cours..." : "Lancer export local"}
               </ActionButton>
 
               <ActionButton
