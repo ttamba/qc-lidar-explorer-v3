@@ -137,11 +137,23 @@ function clamp(value: number, min: number, max: number, fallback: number) {
 
 function buildLocalExportJobId() {
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-
-  return `job-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
-    now.getDate()
-  )}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const pad = (n: number, size = 2) => String(n).padStart(size, "0");
+  
+   const timestamp = [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+    "-",
+    pad(now.getHours()),
+    pad(now.getMinutes()),
+    pad(now.getSeconds()),
+    "-",
+    pad(now.getMilliseconds(), 3),
+  ].join("");
+  
+  const random = Math.random().toString(36).slice(2, 8);
+  
+  return `job-${timestamp}-${random}`;
 }
 
 function inferProductFromTiles(tiles: LocalAgentTilePayload[]): LocalAgentProduct {
