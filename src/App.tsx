@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import "./app/App.css";
 import MapView from "./map/MapView";
 import Basket from "./ui/Basket";
 import type { TileFeature, AoiFeature } from "./types";
@@ -38,6 +39,29 @@ type Dataset = "lidar" | "mnt";
 type AvailableYears = { lidar: string[]; mnt: string[] };
 type YearFilter = { lidar: string | "ALL"; mnt: string | "ALL" };
 type StatusTone = "info" | "success" | "warning" | "error";
+
+type AppTheme = "light" | "dark" | "blue";
+
+const APP_THEMES: Array<{ id: AppTheme; label: string }> = [
+  { id: "light", label: "Clair" },
+  { id: "dark", label: "Nocturne" },
+  { id: "blue", label: "Bleu" },
+];
+
+function getInitialTheme(): AppTheme {
+  if (typeof window === "undefined") return "light";
+  const saved = window.localStorage.getItem("qc-lidar-ui-theme");
+  return saved === "dark" || saved === "blue" || saved === "light" ? saved : "light";
+}
+
+function LogoMark() {
+  return (
+    <div className="brand-logo" aria-hidden="true">
+      <span>QL</span>
+    </div>
+  );
+}
+
 
 type LocalAgentUiSettings = LocalAgentExportSettings & {
   packageMode?: "lean" | "full";
@@ -154,16 +178,16 @@ function SectionCard(props: {
       style={{
         marginTop: 14,
         padding: 14,
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--border-subtle)",
         borderRadius: 12,
-        background: "#ffffff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+        background: "var(--panel-surface)",
+        boxShadow: "var(--shadow-soft)",
       }}
     >
       <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{props.title}</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-main)" }}>{props.title}</div>
         {props.subtitle && (
-          <div style={{ marginTop: 4, fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
             {props.subtitle}
           </div>
         )}
@@ -204,12 +228,12 @@ function SmallStat(props: {
       style={{
         padding: "8px 10px",
         borderRadius: 10,
-        background: "#f9fafb",
-        border: "1px solid #e5e7eb",
+        background: "var(--surface-muted)",
+        border: "1px solid var(--border-subtle)",
       }}
     >
-      <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>{props.label}</div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{props.value}</div>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>{props.label}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-main)" }}>{props.value}</div>
     </div>
   );
 }
@@ -226,9 +250,9 @@ function ActionButton(props: {
   let style: CSSProperties = {
     padding: "9px 12px",
     borderRadius: 10,
-    border: "1px solid #d1d5db",
-    background: "#ffffff",
-    color: "#111827",
+    border: "1px solid var(--border-strong)",
+    background: "var(--panel-surface)",
+    color: "var(--text-main)",
     cursor: props.disabled ? "not-allowed" : "pointer",
     fontWeight: 600,
     fontSize: 13,
@@ -248,7 +272,7 @@ function ActionButton(props: {
     style = {
       ...style,
       border: "1px solid #dc2626",
-      background: "#ffffff",
+      background: "var(--panel-surface)",
       color: "#b91c1c",
     };
   }
@@ -305,7 +329,7 @@ function ExportProgressCard(props: {
         padding: 12,
         borderRadius: 12,
         border: "1px solid #dbeafe",
-        background: "#ffffff",
+        background: "var(--panel-surface)",
         boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
       }}
       role="status"
@@ -321,7 +345,7 @@ function ExportProgressCard(props: {
         }}
       >
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-main)" }}>
             Export bundle LiDAR / MNT
           </div>
           <div style={{ marginTop: 4, fontSize: 12, color: "#4b5563", lineHeight: 1.4 }}>
@@ -341,7 +365,7 @@ function ExportProgressCard(props: {
           display: "flex",
           justifyContent: "space-between",
           fontSize: 12,
-          color: "#6b7280",
+          color: "var(--text-muted)",
           marginBottom: 6,
         }}
       >
@@ -427,6 +451,8 @@ export default function App() {
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
   const [isStartingLocalExport, setIsStartingLocalExport] = useState(false);
+  const [appTheme, setAppTheme] = useState<AppTheme>(getInitialTheme);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [pendingAoiRaw, setPendingAoiRaw] = useState<Record<string, unknown> | null>(null);
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
@@ -535,6 +561,13 @@ export default function App() {
     isReprojectingAoi,
     loadingAoi,
   ]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = appTheme;
+    window.localStorage.setItem("qc-lidar-ui-theme", appTheme);
+  }, [appTheme]);
+
+  const shellClassName = `app-shell theme-${appTheme}${sidebarCollapsed ? " sidebar-collapsed" : ""}`;
 
   useEffect(() => {
     let isMounted = true;
@@ -937,30 +970,58 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#f3f4f6" }}>
-      <aside
-        style={{
-          width: 400,
-          padding: 14,
-          borderRight: "1px solid #d1d5db",
-          overflowY: "auto",
-          background: "#f9fafb",
-        }}
-      >
+    <div className={shellClassName}>
+      <aside className="app-sidebar" aria-label="Panneau de contrôle">
+        <div className="sidebar-toolbar">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            title={sidebarCollapsed ? "Agrandir le panneau" : "Réduire le panneau"}
+            aria-label={sidebarCollapsed ? "Agrandir le panneau" : "Réduire le panneau"}
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
+        </div>
+
+        {sidebarCollapsed ? (
+          <div className="sidebar-rail">
+            <LogoMark />
+            <div className="rail-item" title="Produit actif">{selectedProduct.toUpperCase()}</div>
+            <div className="rail-item" title="Tuiles sélectionnées">{totalSelectionCount}</div>
+          </div>
+        ) : (
+          <>
         <div
           style={{
             padding: 14,
             borderRadius: 14,
-            background: "#ffffff",
-            border: "1px solid #e5e7eb",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            background: "var(--panel-surface)",
+            border: "1px solid var(--border-subtle)",
+            boxShadow: "var(--shadow-soft)",
           }}
         >
-          <div style={{ fontSize: 19, fontWeight: 800, color: "#111827", marginBottom: 4 }}>
-            QC LiDAR / MNT Explorer
+          <div className="brand-header">
+            <LogoMark />
+            <div>
+              <div className="brand-title">QC LiDAR / MNT Explorer</div>
+              <div className="brand-subtitle">
+                Préparation, lecture et export de tuiles LiDAR et MNT du Québec.
+              </div>
+            </div>
           </div>
-          <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.45 }}>
-            Préparation, lecture et export de tuiles LiDAR et MNT du Québec pour une zone d’étude.
+
+          <div className="theme-switcher" aria-label="Choix du thème">
+            {APP_THEMES.map((theme) => (
+              <button
+                key={theme.id}
+                type="button"
+                className={appTheme === theme.id ? "theme-chip active" : "theme-chip"}
+                onClick={() => setAppTheme(theme.id)}
+              >
+                {theme.label}
+              </button>
+            ))}
           </div>
 
           <StatusCard tone={statusSummary.tone}>{statusSummary.message}</StatusCard>
@@ -991,7 +1052,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               Démo client
             </div>
 
-            <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: "var(--text-soft)", lineHeight: 1.5 }}>
               Parcours recommandé : importer une zone d’étude, vérifier la sélection sur la carte,
               filtrer au besoin, puis exporter le panier.
             </div>
@@ -1094,8 +1155,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   marginBottom: 10,
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: "#ffffff",
+                  border: "1px solid var(--border-strong)",
+                  background: "var(--panel-surface)",
                 }}
                 disabled={isReprojectingAoi || !!localExportJobId}
               >
@@ -1136,7 +1197,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
           subtitle="Ajustez le produit et l’année pour affiner la lecture métier de la zone analysée."
         >
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 700, marginBottom: 8, color: "#111827" }}>Produit actif</div>
+            <div style={{ fontWeight: 700, marginBottom: 8, color: "var(--text-main)" }}>Produit actif</div>
 
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <input
@@ -1162,7 +1223,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
           </div>
 
           <div>
-            <div style={{ fontWeight: 700, marginBottom: 8, color: "#111827" }}>
+            <div style={{ fontWeight: 700, marginBottom: 8, color: "var(--text-main)" }}>
               {selectedProduct === "lidar" ? "LiDAR" : "MNT"} — année
             </div>
 
@@ -1191,7 +1252,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
             ))}
 
             {activeYears.length === 0 && (
-              <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.45 }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45 }}>
                 Aucune année disponible pour le produit actif dans la vue courante.
               </div>
             )}
@@ -1238,7 +1299,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 : "Agent local non détecté sur http://127.0.0.1:8765"}
             </StatusCard>
 
-            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
               Dossier de sortie local
               <input
                 type="text"
@@ -1248,14 +1309,14 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 style={{
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: "#ffffff",
+                  border: "1px solid var(--border-strong)",
+                  background: "var(--panel-surface)",
                 }}
               />
             </label>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
                 Concurrence
                 <select
                   value={localAgentSettings.concurrency}
@@ -1263,8 +1324,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid #d1d5db",
-                    background: "#ffffff",
+                    border: "1px solid var(--border-strong)",
+                    background: "var(--panel-surface)",
                   }}
                   disabled={!!localExportJobId}
                 >
@@ -1273,11 +1334,11 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   <option value={3}>3 — recommandé</option>
                   <option value={4}>4 — rapide</option>
                   <option value={5}>5 — agressif</option>
-                  <option value={6}>6 — agressif+</option>
+                  <option value={6}>6 — rapide recommandé</option>
                 </select>
               </label>
 
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
                 Retries
                 <select
                   value={localAgentSettings.retryCount}
@@ -1285,8 +1346,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid #d1d5db",
-                    background: "#ffffff",
+                    border: "1px solid var(--border-strong)",
+                    background: "var(--panel-surface)",
                   }}
                   disabled={!!localExportJobId}
                 >
@@ -1299,7 +1360,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
                 Timeout (s)
                 <input
                   type="number"
@@ -1312,14 +1373,14 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid #d1d5db",
-                    background: "#ffffff",
+                    border: "1px solid var(--border-strong)",
+                    background: "var(--panel-surface)",
                   }}
                   disabled={!!localExportJobId}
                 />
               </label>
 
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
                 Jeu de données
                 <input
                   type="text"
@@ -1331,15 +1392,15 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid #d1d5db",
-                    background: "#ffffff",
+                    border: "1px solid var(--border-strong)",
+                    background: "var(--panel-surface)",
                   }}
                   disabled={!!localExportJobId}
                 />
               </label>
             </div>
 
-            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
               Mode de packaging
               <select
                 value={localAgentSettings.packageMode ?? "lean"}
@@ -1349,8 +1410,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 style={{
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: "#ffffff",
+                  border: "1px solid var(--border-strong)",
+                  background: "var(--panel-surface)",
                 }}
                 disabled={!!localExportJobId}
               >
@@ -1359,7 +1420,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               </select>
             </label>
 
-            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "#374151" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
               Mode de sortie
               <select
                 value={localAgentSettings.outputMode ?? "zip"}
@@ -1369,8 +1430,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 style={{
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  background: "#ffffff",
+                  border: "1px solid var(--border-strong)",
+                  background: "var(--panel-surface)",
                 }}
                 disabled={!!localExportJobId}
               >
@@ -1379,7 +1440,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               </select>
             </label>
 
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#374151" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-soft)" }}>
               <input
                 type="checkbox"
                 checked={localAgentSettings.keepDownloadedFiles}
@@ -1422,7 +1483,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
             </div>
 
             {localExportJobId && (
-              <div style={{ fontSize: 12, color: "#6b7280" }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                 Job en cours : <strong>{localExportJobId}</strong>
               </div>
             )}
@@ -1435,9 +1496,11 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
         >
           <Basket tiles={selectedTiles} />
         </SectionCard>
+          </>
+        )}
       </aside>
 
-      <main style={{ flex: 1, minWidth: 0 }}>
+      <main className="app-map-main">
         <MapView
           aoi={aoi}
           basemaps={null}

@@ -19,7 +19,7 @@ export type LocalAgentExportSettings = {
 
 export const DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS: LocalAgentExportSettings = {
   outputDir: "C:\\HQ\\exports",
-  concurrency: 3,
+  concurrency: 6,
   retryCount: 2,
   requestTimeoutSeconds: 180,
   metadataDatasetName: null,

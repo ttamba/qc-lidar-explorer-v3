@@ -576,13 +576,7 @@ export default function MapView(props: Props) {
 
   const showLidarZoomHint = props.selectedProduct === "lidar" && mapZoom < MIN_ZOOM_FOR_LIDAR_LOAD;
   const showMntZoomHint = props.selectedProduct === "mnt" && mapZoom < MIN_ZOOM_FOR_MNT_LOAD;
-  const activeYear = props.selectedProduct === "lidar" ? props.yearFilter.lidar : props.yearFilter.mnt;
-  const activeSelectionCount =
-    props.selectedProduct === "lidar"
-      ? displayedLidarTilesRef.current.length
-      : displayedMntTilesRef.current.length;
-  const hasAoi = Boolean(props.aoi);
-
+  
   function getNormalized(tile: TileFeature) {
     const cached = normalizeCacheRef.current.get(tile);
     if (cached) return cached;
@@ -1439,72 +1433,16 @@ export default function MapView(props: Props) {
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div className="map-shell" style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} className="map" style={{ position: "absolute", inset: 0 }} />
 
-      {/* Bandeau produit + année + état de sélection */}
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          zIndex: 31,
-          maxWidth: 420,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-            padding: "10px 12px",
-            borderRadius: 16,
-            border: "1px solid #d1d5db",
-            background: "rgba(255,255,255,0.97)",
-            boxShadow: "0 12px 24px rgba(0,0,0,0.10)",
-          }}
-        >
-          <span style={getBadgeStyle("product")}>{props.selectedProduct.toUpperCase()}</span>
-          <span style={getBadgeStyle("year")}>
-            {activeYear === "ALL" ? "Toutes les années" : `Année ${activeYear}`}
-          </span>
-          <span style={getBadgeStyle("selection")}>
-            {activeSelectionCount} tuile{activeSelectionCount > 1 ? "s" : ""}
-          </span>
+      {/* Indicateur discret d’actualisation cartographique */}
+      {isRefreshing && (
+        <div className="map-status-pill" role="status" aria-live="polite">
+          <span className="map-status-dot" />
+          Actualisation cartographique…
         </div>
-
-        {isRefreshing && (
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 10px",
-              borderRadius: 10,
-              border: "1px solid #d1d5db",
-              background: "rgba(255,255,255,0.96)",
-              boxShadow: "0 8px 18px rgba(0,0,0,0.10)",
-              fontSize: 12,
-              color: "#111827",
-            }}
-          >
-            <div
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: "#2563eb",
-                flex: "0 0 auto",
-              }}
-            />
-            Actualisation cartographique…
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Sélecteur rétractable des fonds cartographiques */}
       <div
@@ -2010,29 +1948,6 @@ export default function MapView(props: Props) {
         </div>
       )}
 
-      {/* Pied discret de lecture rapide */}
-      <div
-        style={{
-          position: "absolute",
-          right: 12,
-          bottom: 12,
-          zIndex: 19,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "8px 10px",
-          borderRadius: 10,
-          border: "1px solid #d1d5db",
-          background: "rgba(255,255,255,0.92)",
-          boxShadow: "0 8px 18px rgba(0,0,0,0.08)",
-          fontSize: 12,
-          color: "#374151",
-        }}
-      >
-        <span>{hasAoi ? "Zone d’étude active" : "Aucune zone d’étude"}</span>
-        <span style={{ color: "#9ca3af" }}>•</span>
-        <span>{currentBasemap.label}</span>
-      </div>
     </div>
   );
 }
