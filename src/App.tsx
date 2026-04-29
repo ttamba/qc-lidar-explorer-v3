@@ -39,29 +39,7 @@ type Dataset = "lidar" | "mnt";
 type AvailableYears = { lidar: string[]; mnt: string[] };
 type YearFilter = { lidar: string | "ALL"; mnt: string | "ALL" };
 type StatusTone = "info" | "success" | "warning" | "error";
-
-type AppTheme = "light" | "dark" | "blue";
-
-const APP_THEMES: Array<{ id: AppTheme; label: string }> = [
-  { id: "light", label: "Clair" },
-  { id: "dark", label: "Nocturne" },
-  { id: "blue", label: "Bleu" },
-];
-
-function getInitialTheme(): AppTheme {
-  if (typeof window === "undefined") return "light";
-  const saved = window.localStorage.getItem("qc-lidar-ui-theme");
-  return saved === "dark" || saved === "blue" || saved === "light" ? saved : "light";
-}
-
-function LogoMark() {
-  return (
-    <div className="brand-logo" aria-hidden="true">
-      <span>QL</span>
-    </div>
-  );
-}
-
+type UiTheme = "light" | "dark" | "blue";
 
 type LocalAgentUiSettings = LocalAgentExportSettings & {
   packageMode?: "lean" | "full";
@@ -142,28 +120,28 @@ function getStatusCardStyle(tone: StatusTone): CSSProperties {
   switch (tone) {
     case "success":
       return {
-        border: "1px solid #86efac",
-        background: "#f0fdf4",
-        color: "#166534",
+        border: "1px solid var(--success)",
+        background: "var(--success-soft)",
+        color: "var(--success)",
       };
     case "warning":
       return {
-        border: "1px solid #fcd34d",
-        background: "#fffbeb",
-        color: "#92400e",
+        border: "1px solid var(--warning)",
+        background: "var(--warning-soft)",
+        color: "var(--warning)",
       };
     case "error":
       return {
-        border: "1px solid #fca5a5",
-        background: "#fef2f2",
-        color: "#991b1b",
+        border: "1px solid var(--danger)",
+        background: "var(--danger-soft)",
+        color: "var(--danger)",
       };
     case "info":
     default:
       return {
-        border: "1px solid #bfdbfe",
-        background: "#eff6ff",
-        color: "#1d4ed8",
+        border: "1px solid var(--primary)",
+        background: "var(--primary-soft)",
+        color: "var(--primary)",
       };
   }
 }
@@ -178,10 +156,10 @@ function SectionCard(props: {
       style={{
         marginTop: 14,
         padding: 14,
-        border: "1px solid var(--border-subtle)",
+        border: "1px solid var(--border)",
         borderRadius: 12,
-        background: "var(--panel-surface)",
-        boxShadow: "var(--shadow-soft)",
+        background: "var(--card-bg)",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
       }}
     >
       <div style={{ marginBottom: 10 }}>
@@ -228,8 +206,8 @@ function SmallStat(props: {
       style={{
         padding: "8px 10px",
         borderRadius: 10,
-        background: "var(--surface-muted)",
-        border: "1px solid var(--border-subtle)",
+        background: "var(--card-soft)",
+        border: "1px solid var(--border)",
       }}
     >
       <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>{props.label}</div>
@@ -250,8 +228,8 @@ function ActionButton(props: {
   let style: CSSProperties = {
     padding: "9px 12px",
     borderRadius: 10,
-    border: "1px solid var(--border-strong)",
-    background: "var(--panel-surface)",
+    border: "1px solid var(--border)",
+    background: "var(--card-bg)",
     color: "var(--text-main)",
     cursor: props.disabled ? "not-allowed" : "pointer",
     fontWeight: 600,
@@ -263,7 +241,7 @@ function ActionButton(props: {
     style = {
       ...style,
       border: "1px solid #2563eb",
-      background: "#2563eb",
+      background: "var(--primary)",
       color: "#ffffff",
     };
   }
@@ -272,8 +250,8 @@ function ActionButton(props: {
     style = {
       ...style,
       border: "1px solid #dc2626",
-      background: "var(--panel-surface)",
-      color: "#b91c1c",
+      background: "var(--card-bg)",
+      color: "var(--danger)",
     };
   }
 
@@ -328,8 +306,8 @@ function ExportProgressCard(props: {
         marginTop: 12,
         padding: 12,
         borderRadius: 12,
-        border: "1px solid #dbeafe",
-        background: "var(--panel-surface)",
+        border: "1px solid var(--border)",
+        background: "var(--card-bg)",
         boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
       }}
       role="status"
@@ -348,7 +326,7 @@ function ExportProgressCard(props: {
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-main)" }}>
             Export bundle LiDAR / MNT
           </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: "#4b5563", lineHeight: 1.4 }}>
+          <div style={{ marginTop: 4, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.4 }}>
             {state.message ?? "Traitement en cours…"}
           </div>
         </div>
@@ -392,7 +370,7 @@ function ExportProgressCard(props: {
         />
       </div>
 
-      <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "#4b5563" }}>
+      <div style={{ marginTop: 10, display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
         <div>
           Progression : <strong>{state.completed}</strong> / <strong>{state.total}</strong>
         </div>
@@ -451,8 +429,6 @@ export default function App() {
   const [aoi, setAoi] = useState<AoiFeature | null>(null);
   const [aoiError, setAoiError] = useState<string>("");
   const [isStartingLocalExport, setIsStartingLocalExport] = useState(false);
-  const [appTheme, setAppTheme] = useState<AppTheme>(getInitialTheme);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [pendingAoiRaw, setPendingAoiRaw] = useState<Record<string, unknown> | null>(null);
   const [pendingAoiFileName, setPendingAoiFileName] = useState<string>("");
@@ -476,6 +452,11 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [infoMessage, setInfoMessage] = useState<string>("");
   const [exportUi, setExportUi] = useState<ExportUiState>(INITIAL_EXPORT_UI_STATE);
+  const [uiTheme, setUiTheme] = useState<UiTheme>(() => {
+    const saved = window.localStorage.getItem("qc-lidar-ui-theme");
+    return saved === "dark" || saved === "blue" || saved === "light" ? saved : "light";
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [isLocalAgentReachable, setIsLocalAgentReachable] = useState<boolean | null>(null);
   const [localAgentInfo, setLocalAgentInfo] = useState<string>("");
@@ -563,11 +544,9 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = appTheme;
-    window.localStorage.setItem("qc-lidar-ui-theme", appTheme);
-  }, [appTheme]);
-
-  const shellClassName = `app-shell theme-${appTheme}${sidebarCollapsed ? " sidebar-collapsed" : ""}`;
+    document.documentElement.dataset.theme = uiTheme;
+    window.localStorage.setItem("qc-lidar-ui-theme", uiTheme);
+  }, [uiTheme]);
 
   useEffect(() => {
     let isMounted = true;
@@ -970,25 +949,24 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
   }
 
   return (
-    <div className={shellClassName}>
-      <aside className="app-sidebar" aria-label="Panneau de contrôle">
-        <div className="sidebar-toolbar">
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setSidebarCollapsed((prev) => !prev)}
-            title={sidebarCollapsed ? "Agrandir le panneau" : "Réduire le panneau"}
-            aria-label={sidebarCollapsed ? "Agrandir le panneau" : "Réduire le panneau"}
-          >
-            {sidebarCollapsed ? "›" : "‹"}
-          </button>
-        </div>
+    <div className="app-shell" data-theme={uiTheme}>
+      <aside
+        className="app-sidebar"
+        style={{ width: sidebarCollapsed ? 68 : 400 }}
+      >
+        <button
+          type="button"
+          className="sidebar-toggle"
+          onClick={() => setSidebarCollapsed((prev) => !prev)}
+          aria-label={sidebarCollapsed ? "Agrandir le panneau" : "Réduire le panneau"}
+          title={sidebarCollapsed ? "Agrandir le panneau" : "Réduire le panneau"}
+        >
+          {sidebarCollapsed ? "›" : "‹"}
+        </button>
 
         {sidebarCollapsed ? (
-          <div className="sidebar-rail">
-            <LogoMark />
-            <div className="rail-item" title="Produit actif">{selectedProduct.toUpperCase()}</div>
-            <div className="rail-item" title="Tuiles sélectionnées">{totalSelectionCount}</div>
+          <div className="sidebar-collapsed-brand">
+            <div className="app-logo">QL</div>
           </div>
         ) : (
           <>
@@ -996,32 +974,43 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
           style={{
             padding: 14,
             borderRadius: 14,
-            background: "var(--panel-surface)",
-            border: "1px solid var(--border-subtle)",
-            boxShadow: "var(--shadow-soft)",
+            background: "var(--card-bg)",
+            border: "1px solid var(--border)",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
           }}
         >
-          <div className="brand-header">
-            <LogoMark />
+          <div className="app-brand-row">
+            <div className="app-logo">QL</div>
             <div>
-              <div className="brand-title">QC LiDAR / MNT Explorer</div>
-              <div className="brand-subtitle">
-                Préparation, lecture et export de tuiles LiDAR et MNT du Québec.
+              <div className="app-title">QC LiDAR / MNT Explorer</div>
+              <div className="app-subtitle">
+                Préparation, lecture et export de tuiles LiDAR et MNT du Québec pour une zone d’étude.
               </div>
             </div>
           </div>
 
-          <div className="theme-switcher" aria-label="Choix du thème">
-            {APP_THEMES.map((theme) => (
-              <button
-                key={theme.id}
-                type="button"
-                className={appTheme === theme.id ? "theme-chip active" : "theme-chip"}
-                onClick={() => setAppTheme(theme.id)}
-              >
-                {theme.label}
-              </button>
-            ))}
+          <div className="theme-switcher" aria-label="Thèmes de couleur">
+            <button
+              type="button"
+              className={uiTheme === "light" ? "theme-button active" : "theme-button"}
+              onClick={() => setUiTheme("light")}
+            >
+              Clair
+            </button>
+            <button
+              type="button"
+              className={uiTheme === "dark" ? "theme-button active" : "theme-button"}
+              onClick={() => setUiTheme("dark")}
+            >
+              Nocturne
+            </button>
+            <button
+              type="button"
+              className={uiTheme === "blue" ? "theme-button active" : "theme-button"}
+              onClick={() => setUiTheme("blue")}
+            >
+              Bleu
+            </button>
           </div>
 
           <StatusCard tone={statusSummary.tone}>{statusSummary.message}</StatusCard>
@@ -1031,8 +1020,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               marginTop: 12,
               padding: 12,
               borderRadius: 12,
-              border: "1px solid #dbeafe",
-              background: "#f8fbff",
+              border: "1px solid var(--border)",
+              background: "var(--card-soft)",
             }}
           >
             <div
@@ -1041,9 +1030,9 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 alignItems: "center",
                 padding: "4px 8px",
                 borderRadius: 999,
-                border: "1px solid #bfdbfe",
-                background: "#eff6ff",
-                color: "#1d4ed8",
+                border: "1px solid var(--primary)",
+                background: "var(--primary-soft)",
+                color: "var(--primary)",
                 fontSize: 11,
                 fontWeight: 800,
                 marginBottom: 8,
@@ -1052,7 +1041,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               Démo client
             </div>
 
-            <div style={{ fontSize: 12, color: "var(--text-soft)", lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
               Parcours recommandé : importer une zone d’étude, vérifier la sélection sur la carte,
               filtrer au besoin, puis exporter le panier.
             </div>
@@ -1113,9 +1102,9 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 marginTop: 10,
                 padding: 10,
                 borderRadius: 10,
-                border: "1px solid #fcd34d",
-                background: "#fffbeb",
-                color: "#92400e",
+                border: "1px solid var(--warning)",
+                background: "var(--warning-soft)",
+                color: "var(--warning)",
                 fontSize: 12,
                 lineHeight: 1.45,
               }}
@@ -1155,8 +1144,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   marginBottom: 10,
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid var(--border-strong)",
-                  background: "var(--panel-surface)",
+                  border: "1px solid var(--border)",
+                  background: "var(--card-bg)",
                 }}
                 disabled={isReprojectingAoi || !!localExportJobId}
               >
@@ -1299,7 +1288,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 : "Agent local non détecté sur http://127.0.0.1:8765"}
             </StatusCard>
 
-            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
               Dossier de sortie local
               <input
                 type="text"
@@ -1309,14 +1298,14 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 style={{
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid var(--border-strong)",
-                  background: "var(--panel-surface)",
+                  border: "1px solid var(--border)",
+                  background: "var(--card-bg)",
                 }}
               />
             </label>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
                 Concurrence
                 <select
                   value={localAgentSettings.concurrency}
@@ -1324,8 +1313,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid var(--border-strong)",
-                    background: "var(--panel-surface)",
+                    border: "1px solid var(--border)",
+                    background: "var(--card-bg)",
                   }}
                   disabled={!!localExportJobId}
                 >
@@ -1338,7 +1327,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 </select>
               </label>
 
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
                 Retries
                 <select
                   value={localAgentSettings.retryCount}
@@ -1346,8 +1335,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid var(--border-strong)",
-                    background: "var(--panel-surface)",
+                    border: "1px solid var(--border)",
+                    background: "var(--card-bg)",
                   }}
                   disabled={!!localExportJobId}
                 >
@@ -1360,7 +1349,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
                 Timeout (s)
                 <input
                   type="number"
@@ -1373,14 +1362,14 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid var(--border-strong)",
-                    background: "var(--panel-surface)",
+                    border: "1px solid var(--border)",
+                    background: "var(--card-bg)",
                   }}
                   disabled={!!localExportJobId}
                 />
               </label>
 
-              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+              <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
                 Jeu de données
                 <input
                   type="text"
@@ -1392,15 +1381,15 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   style={{
                     padding: 8,
                     borderRadius: 8,
-                    border: "1px solid var(--border-strong)",
-                    background: "var(--panel-surface)",
+                    border: "1px solid var(--border)",
+                    background: "var(--card-bg)",
                   }}
                   disabled={!!localExportJobId}
                 />
               </label>
             </div>
 
-            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
               Mode de packaging
               <select
                 value={localAgentSettings.packageMode ?? "lean"}
@@ -1410,8 +1399,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 style={{
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid var(--border-strong)",
-                  background: "var(--panel-surface)",
+                  border: "1px solid var(--border)",
+                  background: "var(--card-bg)",
                 }}
                 disabled={!!localExportJobId}
               >
@@ -1420,7 +1409,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               </select>
             </label>
 
-            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-soft)" }}>
+            <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
               Mode de sortie
               <select
                 value={localAgentSettings.outputMode ?? "zip"}
@@ -1430,8 +1419,8 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 style={{
                   padding: 8,
                   borderRadius: 8,
-                  border: "1px solid var(--border-strong)",
-                  background: "var(--panel-surface)",
+                  border: "1px solid var(--border)",
+                  background: "var(--card-bg)",
                 }}
                 disabled={!!localExportJobId}
               >
@@ -1440,7 +1429,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
               </select>
             </label>
 
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-soft)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
               <input
                 type="checkbox"
                 checked={localAgentSettings.keepDownloadedFiles}
@@ -1494,7 +1483,9 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
           title="Panier"
           subtitle="Inventaire synthétique des tuiles prêtes à être exportées."
         >
-          <Basket tiles={selectedTiles} />
+          <div className="basket-theme-scope">
+            <Basket tiles={selectedTiles} />
+          </div>
         </SectionCard>
           </>
         )}

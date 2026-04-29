@@ -320,57 +320,44 @@ function getAoiBounds(aoi: AoiFeature | null): LngLatBoundsLike | null {
 }
 
 function getBadgeStyle(kind: "neutral" | "product" | "year" | "selection"): React.CSSProperties {
+  const base: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 8px",
+    borderRadius: 999,
+    color: "var(--text-main)",
+    fontSize: 11,
+    fontWeight: 700,
+  };
+
   if (kind === "product") {
     return {
-      display: "inline-flex",
-      alignItems: "center",
-      padding: "4px 8px",
-      borderRadius: 999,
-      background: "#eff6ff",
-      color: "#1d4ed8",
-      border: "1px solid #bfdbfe",
-      fontSize: 11,
-      fontWeight: 700,
+      ...base,
+      background: "var(--primary-soft)",
+      border: "1px solid var(--primary)",
     };
   }
 
   if (kind === "year") {
     return {
-      display: "inline-flex",
-      alignItems: "center",
-      padding: "4px 8px",
-      borderRadius: 999,
-      background: "#f3f4f6",
-      color: "#374151",
-      border: "1px solid #e5e7eb",
-      fontSize: 11,
-      fontWeight: 700,
+      ...base,
+      background: "var(--surface-2)",
+      border: "1px solid var(--border)",
     };
   }
 
   if (kind === "selection") {
     return {
-      display: "inline-flex",
-      alignItems: "center",
-      padding: "4px 8px",
-      borderRadius: 999,
-      background: "#f0fdf4",
-      color: "#166534",
-      border: "1px solid #86efac",
-      fontSize: 11,
-      fontWeight: 700,
+      ...base,
+      background: "var(--success-soft)",
+      border: "1px solid var(--success)",
     };
   }
 
   return {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "4px 8px",
-    borderRadius: 999,
-    background: "#f9fafb",
-    color: "#374151",
-    border: "1px solid #e5e7eb",
-    fontSize: 11,
+    ...base,
+    background: "var(--surface-2)",
+    border: "1px solid var(--border)",
     fontWeight: 600,
   };
 }
@@ -380,13 +367,13 @@ function getMapButtonStyle(isPrimary = false): React.CSSProperties {
     minHeight: 34,
     padding: "8px 10px",
     borderRadius: 10,
-    border: isPrimary ? "1px solid #2563eb" : "1px solid #d1d5db",
-    background: isPrimary ? "#2563eb" : "rgba(255,255,255,0.97)",
-    color: isPrimary ? "#ffffff" : "#111827",
+    border: isPrimary ? "1px solid var(--primary)" : "1px solid var(--border)",
+    background: isPrimary ? "var(--primary)" : "var(--surface-2)",
+    color: isPrimary ? "#ffffff" : "var(--text-main)",
     cursor: "pointer",
     fontSize: 12,
     fontWeight: 700,
-    boxShadow: "0 6px 16px rgba(0,0,0,0.08)",
+    boxShadow: "var(--shadow-soft)",
   };
 }
 
@@ -576,7 +563,10 @@ export default function MapView(props: Props) {
 
   const showLidarZoomHint = props.selectedProduct === "lidar" && mapZoom < MIN_ZOOM_FOR_LIDAR_LOAD;
   const showMntZoomHint = props.selectedProduct === "mnt" && mapZoom < MIN_ZOOM_FOR_MNT_LOAD;
-  
+  // Les badges produit/année/sélection superposés à la carte ont été retirés.
+  // Ces informations sont affichées uniquement dans le panneau latéral.
+  /** const hasAoi = Boolean(props.aoi); */
+
   function getNormalized(tile: TileFeature) {
     const cached = normalizeCacheRef.current.get(tile);
     if (cached) return cached;
@@ -1433,19 +1423,18 @@ export default function MapView(props: Props) {
   }, [props.yearFilter.lidar, props.yearFilter.mnt]);
 
   return (
-    <div className="map-shell" style={{ position: "relative", width: "100%", height: "100%" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={containerRef} className="map" style={{ position: "absolute", inset: 0 }} />
 
-      {/* Indicateur discret d’actualisation cartographique */}
       {isRefreshing && (
-        <div className="map-status-pill" role="status" aria-live="polite">
-          <span className="map-status-dot" />
+        <div className="map-refresh-pill">
           Actualisation cartographique…
         </div>
       )}
 
       {/* Sélecteur rétractable des fonds cartographiques */}
       <div
+        className="map-basemap-panel"
         style={{
           position: "absolute",
           top: 12,
@@ -1453,9 +1442,10 @@ export default function MapView(props: Props) {
           zIndex: 32,
           width: isBasemapMenuOpen ? 332 : 40,
           borderRadius: 14,
-          border: "1px solid #d1d5db",
-          background: "rgba(255,255,255,0.97)",
-          boxShadow: "0 16px 32px rgba(0,0,0,0.12)",
+          border: "1px solid var(--border)",
+          background: "var(--surface-1)",
+          boxShadow: "var(--shadow-soft)",
+          color: "var(--text-main)",
           overflow: "hidden",
         }}
       >
@@ -1470,10 +1460,10 @@ export default function MapView(props: Props) {
         >
           {isBasemapMenuOpen && (
             <div>
-              <div style={{ fontWeight: 800, fontSize: 13, color: "#111827" }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: "var(--text-main)" }}>
                 Fond de carte
               </div>
-              <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
+              <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-muted)" }}>
                 OpenStreetMap
               </div>
             </div>
@@ -1481,12 +1471,13 @@ export default function MapView(props: Props) {
 
           <button
             type="button"
+            className="map-basemap-toggle"
             onClick={() => setIsBasemapMenuOpen((prev) => !prev)}
             style={{
               width: 28,
               height: 28,
               border: "none",
-              background: "#0f8f88",
+              background: "var(--primary)",
               borderRadius: 8,
               cursor: "pointer",
               display: "inline-flex",
@@ -1548,15 +1539,15 @@ export default function MapView(props: Props) {
               style={{
                 padding: 11,
                 borderRadius: 14,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
               }}
             >
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
                 Fond actif
               </div>
-              <div style={{ fontWeight: 700, color: "#111827" }}>{currentBasemap.label}</div>
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+              <div style={{ fontWeight: 700, color: "var(--text-main)" }}>{currentBasemap.label}</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
                 {currentBasemap.subtitle}
               </div>
             </div>
@@ -1565,11 +1556,11 @@ export default function MapView(props: Props) {
               style={{
                 padding: 11,
                 borderRadius: 14,
-                background: "#ffffff",
-                border: "1px solid #e5e7eb",
+                background: "var(--surface-1)",
+                border: "1px solid var(--border)",
               }}
             >
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
                 Contrôles de vue
               </div>
 
@@ -1639,8 +1630,8 @@ export default function MapView(props: Props) {
                       gap: 10,
                       padding: "10px 12px",
                       borderRadius: 12,
-                      border: isActive ? "1px solid #2563eb" : "1px solid #e5e7eb",
-                      background: isActive ? "#eff6ff" : "#ffffff",
+                      border: isActive ? "1px solid var(--primary)" : "1px solid var(--border)",
+                      background: isActive ? "var(--primary-soft)" : "var(--surface-1)",
                       cursor: "pointer",
                     }}
                   >
@@ -1652,10 +1643,10 @@ export default function MapView(props: Props) {
                       style={{ marginTop: 2 }}
                     />
                     <span>
-                      <div style={{ fontWeight: 700, fontSize: 13, color: "#111827" }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: "var(--text-main)" }}>
                         {option.label}
                       </div>
-                      <div style={{ marginTop: 2, fontSize: 12, color: "#6b7280" }}>
+                      <div style={{ marginTop: 2, fontSize: 12, color: "var(--text-muted)" }}>
                         {option.subtitle}
                       </div>
                     </span>
@@ -1670,25 +1661,26 @@ export default function MapView(props: Props) {
       {/* Légende carte */}
       {isLegendOpen && (
         <div
+          className="map-legend-card map-legend"
           style={{
             position: "absolute",
-            left: 12,
-            bottom: 58,
+            right: 12,
+            bottom: 38,
             zIndex: 20,
             width: 280,
             maxWidth: "calc(100% - 24px)",
-            background: "rgba(255,255,255,0.96)",
-            border: "1px solid #d1d5db",
+            background: "var(--surface-1)",
+            border: "1px solid var(--border)",
             borderRadius: 14,
-            boxShadow: "0 10px 24px rgba(0,0,0,0.12)",
+            boxShadow: "var(--shadow-soft)",
             padding: 12,
-            color: "#111827",
+            color: "var(--text-main)",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 800, fontSize: 13 }}>Légende</div>
-              <div style={{ marginTop: 2, fontSize: 11, color: "#6b7280" }}>
+              <div style={{ marginTop: 2, fontSize: 11, color: "var(--text-muted)" }}>
                 Repères visuels pour la démonstration
               </div>
             </div>
@@ -1709,7 +1701,7 @@ export default function MapView(props: Props) {
               />
               <div style={{ fontSize: 12 }}>
                 <div style={{ fontWeight: 700 }}>AOI</div>
-                <div style={{ color: "#6b7280" }}>Zone d’étude chargée</div>
+                <div style={{ color: "var(--text-muted)" }}>Zone d’étude chargée</div>
               </div>
             </div>
 
@@ -1726,7 +1718,7 @@ export default function MapView(props: Props) {
               />
               <div style={{ fontSize: 12 }}>
                 <div style={{ fontWeight: 700 }}>Tuiles visibles</div>
-                <div style={{ color: "#6b7280" }}>
+                <div style={{ color: "var(--text-muted)" }}>
                   Couverture actuellement lue dans la vue
                 </div>
               </div>
@@ -1745,7 +1737,7 @@ export default function MapView(props: Props) {
               />
               <div style={{ fontSize: 12 }}>
                 <div style={{ fontWeight: 700 }}>Tuiles sélectionnées</div>
-                <div style={{ color: "#6b7280" }}>
+                <div style={{ color: "var(--text-muted)" }}>
                   Résultat retenu pour le panier et l’export
                 </div>
               </div>
@@ -1757,25 +1749,64 @@ export default function MapView(props: Props) {
       {/* Indication utilisateur : zoom insuffisant pour le dataset actif */}
       {(showLidarZoomHint || showMntZoomHint) && (
         <div
+          className="zoom-hint-card"
           style={{
             position: "absolute",
-            left: 12,
-            bottom: isLegendOpen ? 238 : 58,
-            zIndex: 20,
+            left: 16,
+            bottom: 54,
+            zIndex: 24,
             maxWidth: 420,
-            background: "rgba(255,255,255,0.96)",
-            border: "1px solid #d1d5db",
+            background: "#ffffff",
+            border: "1px solid #2563eb",
             borderRadius: 12,
-            boxShadow: "0 12px 26px rgba(0,0,0,0.12)",
-            padding: "11px 12px",
+            boxShadow: "0 12px 26px rgba(15,23,42,0.18)",
+            padding: "12px 14px",
             fontSize: 13,
-            lineHeight: 1.45,
+            lineHeight: 1.5,
             color: "#111827",
+            textShadow: "none",
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Niveau de zoom insuffisant</div>
-          {showLidarZoomHint && <div>Les tuiles LiDAR deviennent disponibles à partir du zoom <strong>{MIN_ZOOM_FOR_LIDAR_LOAD}</strong>.</div>}
-          {showMntZoomHint && <div>Les tuiles MNT deviennent disponibles à partir du zoom <strong>{MIN_ZOOM_FOR_MNT_LOAD}</strong>.</div>}
+          <div
+            style={{
+              fontWeight: 800,
+              marginBottom: 6,
+              color: "#1d4ed8",
+              textShadow: "none",
+            }}
+          >
+            Niveau de zoom insuffisant
+          </div>
+
+          {showLidarZoomHint && (
+            <div style={{ color: "#374151", textShadow: "none" }}>
+              Les tuiles LiDAR deviennent disponibles à partir du zoom{" "}
+              <strong
+                style={{
+                  color: "#111827",
+                  fontWeight: 900,
+                  textShadow: "none",
+                }}
+              >
+                {MIN_ZOOM_FOR_LIDAR_LOAD}
+              </strong>.
+            </div>
+          )}
+
+          {showMntZoomHint && (
+            <div style={{ color: "#374151", textShadow: "none" }}>
+              Les tuiles MNT deviennent disponibles à partir du zoom{" "}
+              <strong
+                style={{
+                  color: "#111827",
+                  fontWeight: 900,
+                  textShadow: "none",
+                }}
+              >
+                {MIN_ZOOM_FOR_MNT_LOAD}
+              </strong>.
+            </div>
+          )}
         </div>
       )}
 
@@ -1785,20 +1816,23 @@ export default function MapView(props: Props) {
           - interaction utilisateur */}
       {panelInfo && (
         <div
+          className="tile-info-card"
           style={{
             position: "absolute",
-            top: 12,
-            right: 12,
-            zIndex: 20,
+top: 72,
+            right: 76,
+            zIndex: 18,
             width: 360,
             maxWidth: "calc(100% - 24px)",
-            background: "rgba(255,255,255,0.97)",
-            border: "1px solid #d1d5db",
+            background: "#ffffff",
+            border: "1px solid #dbeafe",
             borderRadius: 18,
-            boxShadow: "0 18px 36px rgba(0,0,0,0.16)",
+            boxShadow: "0 18px 34px rgba(15,23,42,0.18)",
             padding: 15,
             fontSize: 13,
             lineHeight: 1.45,
+            color: "#111827",
+            textShadow: "none",
           }}
         >
           <div
@@ -1825,10 +1859,37 @@ export default function MapView(props: Props) {
               </div>
 
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <span style={getBadgeStyle("product")}>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: "#eff6ff",
+                    border: "1px solid #2563eb",
+                    color: "#0f172a",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    textShadow: "none",
+                  }}
+                >
                   {panelInfo.product ? panelInfo.product.toUpperCase() : "UNKNOWN"}
                 </span>
-                <span style={getBadgeStyle("year")}>
+
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    background: "#f8fafc",
+                    border: "1px solid #cbd5e1",
+                    color: "#0f172a",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    textShadow: "none",
+                  }}
+                >
                   {panelInfo.year ?? "Année N/D"}
                 </span>
               </div>
@@ -1838,7 +1899,7 @@ export default function MapView(props: Props) {
               type="button"
               onClick={() => setPanelInfo(null)}
               style={{
-                border: "1px solid #d1d5db",
+                border: "1px solid #dbeafe",
                 background: "#ffffff",
                 width: 34,
                 height: 34,
@@ -1846,7 +1907,7 @@ export default function MapView(props: Props) {
                 fontSize: 18,
                 lineHeight: 1,
                 cursor: "pointer",
-                color: "#6b7280",
+                color: "#374151",
                 flex: "0 0 auto",
               }}
               aria-label="Fermer"
@@ -1868,11 +1929,11 @@ export default function MapView(props: Props) {
               style={{
                 padding: "10px 12px",
                 borderRadius: 12,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
+                background: "#f8fafc",
+                border: "1px solid #dbeafe",
               }}
             >
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Identifiant</div>
+              <div style={{ fontSize: 11, color: "#374151", marginBottom: 4 }}>Identifiant</div>
               <div style={{ fontWeight: 700, color: "#111827", wordBreak: "break-word" }}>
                 {panelInfo.id || "unknown"}
               </div>
@@ -1882,11 +1943,11 @@ export default function MapView(props: Props) {
               style={{
                 padding: "10px 12px",
                 borderRadius: 12,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
+                background: "#f8fafc",
+                border: "1px solid #dbeafe",
               }}
             >
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>Fournisseur</div>
+              <div style={{ fontSize: 11, color: "#374151", marginBottom: 4 }}>Fournisseur</div>
               <div style={{ fontWeight: 600, color: "#111827", wordBreak: "break-word" }}>
                 {panelInfo.provider ? String(panelInfo.provider) : "N/D"}
               </div>
@@ -1896,12 +1957,12 @@ export default function MapView(props: Props) {
               style={{
                 padding: "10px 12px",
                 borderRadius: 12,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
+                background: "#f8fafc",
+                border: "1px solid #dbeafe",
               }}
             >
-              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>URL</div>
-              <div style={{ color: "#374151", wordBreak: "break-all" }}>
+              <div style={{ fontSize: 11, color: "#374151", marginBottom: 4 }}>URL</div>
+              <div style={{ color: "#111827", wordBreak: "break-all" }}>
                 {panelInfo.url ? panelInfo.url : "URL non disponible"}
               </div>
             </div>
@@ -1915,7 +1976,7 @@ export default function MapView(props: Props) {
               style={{
                 padding: "10px 12px",
                 borderRadius: 10,
-                border: "1px solid #2563eb",
+                border: "1px solid var(--primary)",
                 background: panelInfo.url ? "#2563eb" : "#9ca3af",
                 color: "#ffffff",
                 cursor: panelInfo.url ? "pointer" : "not-allowed",
@@ -1931,7 +1992,7 @@ export default function MapView(props: Props) {
               style={{
                 padding: "10px 12px",
                 borderRadius: 10,
-                border: "1px solid #d1d5db",
+                border: "1px solid #dbeafe",
                 background: "#ffffff",
                 color: "#111827",
                 cursor: "pointer",
@@ -1942,11 +2003,12 @@ export default function MapView(props: Props) {
             </button>
           </div>
 
-          <div style={{ marginTop: 10, color: "#6b7280", fontSize: 12 }}>
+          <div style={{ marginTop: 10, color: "#374151", fontSize: 12 }}>
             Astuce : Ctrl/Cmd + clic ouvre directement le lien de la tuile sélectionnée.
           </div>
         </div>
       )}
+
 
     </div>
   );
