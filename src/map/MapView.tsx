@@ -475,6 +475,9 @@ export default function MapView(props: Props) {
   const [panelInfo, setPanelInfo] = useState<PanelInfo | null>(null);
   const panelInfoRef = useRef<PanelInfo | null>(null);
   const [mapZoom, setMapZoom] = useState<number>(8);
+  const [zoomWarning, setZoomWarning] = useState<string | null>(null);
+  const zoomWarningTimerRef = useRef<number | null>(null);
+  const lastZoomWarningKeyRef = useRef<string>("");
 
   /**
    * États UX carte :
@@ -510,6 +513,8 @@ export default function MapView(props: Props) {
   useEffect(() => {
     panelInfoRef.current = panelInfo;
   }, [panelInfo]);
+
+
 
   /**
    * Catalogue des fonds de carte.
@@ -563,9 +568,66 @@ export default function MapView(props: Props) {
 
   const showLidarZoomHint = props.selectedProduct === "lidar" && mapZoom < MIN_ZOOM_FOR_LIDAR_LOAD;
   const showMntZoomHint = props.selectedProduct === "mnt" && mapZoom < MIN_ZOOM_FOR_MNT_LOAD;
+
+  function showTemporaryZoomWarning(message: string, warningKey: string) {
+    if (lastZoomWarningKeyRef.current === warningKey && zoomWarning) return;
+
+    lastZoomWarningKeyRef.current = warningKey;
+    setZoomWarning(message);
+
+    if (zoomWarningTimerRef.current !== null) {
+      window.clearTimeout(zoomWarningTimerRef.current);
+    }
+
+    zoomWarningTimerRef.current = window.setTimeout(() => {
+      setZoomWarning(null);
+      zoomWarningTimerRef.current = null;
+      lastZoomWarningKeyRef.current = "";
+    }, 10_000);
+  }
+
+  function clearZoomWarning() {
+    if (zoomWarningTimerRef.current !== null) {
+      window.clearTimeout(zoomWarningTimerRef.current);
+      zoomWarningTimerRef.current = null;
+    }
+
+    lastZoomWarningKeyRef.current = "";
+    setZoomWarning(null);
+  }
+
+  useEffect(() => {
+    if (showLidarZoomHint) {
+      showTemporaryZoomWarning(
+        `Niveau de zoom insuffisant. Les tuiles LiDAR deviennent disponibles à partir du zoom ${MIN_ZOOM_FOR_LIDAR_LOAD}.`,
+        `lidar:${Math.floor(mapZoom * 10) / 10}`,
+      );
+      return;
+    }
+
+    if (showMntZoomHint) {
+      showTemporaryZoomWarning(
+        `Niveau de zoom insuffisant. Les tuiles MNT deviennent disponibles à partir du zoom ${MIN_ZOOM_FOR_MNT_LOAD}.`,
+        `mnt:${Math.floor(mapZoom * 10) / 10}`,
+      );
+      return;
+    }
+
+    clearZoomWarning();
+  }, [showLidarZoomHint, showMntZoomHint, mapZoom, props.selectedProduct]);
+
+  useEffect(() => {
+    return () => {
+      if (zoomWarningTimerRef.current !== null) {
+        window.clearTimeout(zoomWarningTimerRef.current);
+        zoomWarningTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Les badges produit/année/sélection superposés à la carte ont été retirés.
   // Ces informations sont affichées uniquement dans le panneau latéral.
-  /** const hasAoi = Boolean(props.aoi); */
+ /** const hasAoi = Boolean(props.aoi); */
 
   function getNormalized(tile: TileFeature) {
     const cached = normalizeCacheRef.current.get(tile);
@@ -1746,8 +1808,8 @@ export default function MapView(props: Props) {
         </div>
       )}
 
-      {/* Indication utilisateur : zoom insuffisant pour le dataset actif */}
-      {(showLidarZoomHint || showMntZoomHint) && (
+      {/* Notification temporaire : zoom insuffisant pour le dataset actif */}
+      {zoomWarning && (
         <div
           className="zoom-hint-card"
           style={{
@@ -1755,7 +1817,7 @@ export default function MapView(props: Props) {
             left: 16,
             bottom: 54,
             zIndex: 24,
-            maxWidth: 420,
+            maxWidth: 460,
             background: "#ffffff",
             border: "1px solid #2563eb",
             borderRadius: 12,
@@ -1778,35 +1840,20 @@ export default function MapView(props: Props) {
             Niveau de zoom insuffisant
           </div>
 
-          {showLidarZoomHint && (
-            <div style={{ color: "#374151", textShadow: "none" }}>
-              Les tuiles LiDAR deviennent disponibles à partir du zoom{" "}
-              <strong
-                style={{
-                  color: "#111827",
-                  fontWeight: 900,
-                  textShadow: "none",
-                }}
-              >
-                {MIN_ZOOM_FOR_LIDAR_LOAD}
-              </strong>.
-            </div>
-          )}
+          <div style={{ color: "#374151", textShadow: "none" }}>
+            {zoomWarning}
+          </div>
 
-          {showMntZoomHint && (
-            <div style={{ color: "#374151", textShadow: "none" }}>
-              Les tuiles MNT deviennent disponibles à partir du zoom{" "}
-              <strong
-                style={{
-                  color: "#111827",
-                  fontWeight: 900,
-                  textShadow: "none",
-                }}
-              >
-                {MIN_ZOOM_FOR_MNT_LOAD}
-              </strong>.
-            </div>
-          )}
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              color: "#6b7280",
+              textShadow: "none",
+            }}
+          >
+            Ce message disparaîtra automatiquement après 10 secondes.
+          </div>
         </div>
       )}
 

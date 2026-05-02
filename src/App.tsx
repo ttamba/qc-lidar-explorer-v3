@@ -116,6 +116,32 @@ function formatBytes(bytes?: number) {
   return `${value.toFixed(value >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function getNetworkProfileFromConcurrency(concurrency: number): "wifi" | "lan" | "advanced" {
+  if (concurrency >= 10) return "advanced";
+  if (concurrency >= 8) return "lan";
+  return "wifi";
+}
+
+function getNetworkProfileLabel(concurrency: number) {
+  if (concurrency >= 10) return "Avancé / test seulement";
+  if (concurrency >= 8) return "LAN recommandé";
+  if (concurrency >= 6) return "Wi-Fi recommandé";
+  return "Wi-Fi prudent";
+}
+
+function getNetworkProfileDescription(concurrency: number) {
+  if (concurrency >= 10) {
+    return "Profil avancé réservé aux tests. Peut saturer le réseau ou le serveur distant.";
+  }
+  if (concurrency >= 8) {
+    return "Profil optimisé pour réseau filaire LAN stable.";
+  }
+  if (concurrency >= 6) {
+    return "Profil recommandé selon vos tests Wi-Fi : 10 tuiles en environ 57 s.";
+  }
+  return "Profil prudent pour Wi-Fi instable ou réseau partagé.";
+}
+
 function getStatusCardStyle(tone: StatusTone): CSSProperties {
   switch (tone) {
     case "success":
@@ -464,6 +490,7 @@ export default function App() {
   const [localAgentSettings, setLocalAgentSettings] = useState<LocalAgentUiSettings>({
     ...DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
     packageMode: "lean",
+    networkProfile: "wifi",
 	outputMode: "zip", // 👈 AJOUT
   });
 
@@ -581,15 +608,22 @@ export default function App() {
         if (cancelled) return;
 
         const phase =
-          status.phase === "queued" || status.phase === "prepare" || status.phase === "estimate"
-            ? "download"
-            : status.phase === "download"
-              ? "download"
-              : status.phase === "zip"
+          status.status === "failed" || status.status === "cancelled"
+            ? "error"
+            : status.status === "completed" || status.phase === "done"
+              ? "done"
+              : status.phase === "zip" || status.phase === "finalizing"
                 ? "zip"
-                : status.phase === "done"
-                  ? "done"
-                  : "error";
+                : status.phase === "queued" ||
+                    status.phase === "pending" ||
+                    status.phase === "prepare" ||
+                    status.phase === "estimate" ||
+                    status.phase === "init" ||
+                    status.phase === "download" ||
+                    status.phase === "downloading" ||
+                    status.status === "running"
+                  ? "download"
+                  : "download";
 
         const extraMessageParts: string[] = [];
         if (status.bytes_downloaded > 0) {
@@ -665,10 +699,18 @@ export default function App() {
   }, [localExportJobId]);
 
   function updateLocalAgentSettings(patch: Partial<LocalAgentUiSettings>) {
-    setLocalAgentSettings((prev) => ({
-      ...prev,
-      ...patch,
-    }));
+    setLocalAgentSettings((prev) => {
+      const next = {
+        ...prev,
+        ...patch,
+      };
+
+      if (typeof patch.concurrency === "number") {
+        next.networkProfile = getNetworkProfileFromConcurrency(patch.concurrency);
+      }
+
+      return next;
+    });
   }
 
   async function handleAoiFile(e: ChangeEvent<HTMLInputElement>) {
@@ -880,7 +922,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
 
     try {
       setIsStartingLocalExport(true);
-      setLocalExportJobId(job.job_id);
+      setLocalExportJobId(null);
 
       setInfoMessage("");
       setAoiError("");
@@ -1285,7 +1327,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
             <StatusCard tone={isLocalAgentReachable ? "success" : "warning"}>
               {isLocalAgentReachable
                 ? `Agent connecté : ${localAgentInfo}`
-                : "Agent local non détecté sur http://127.0.0.1:8765"}
+                : "Agent local non détecté sur http://127.0.0.1:8787"}
             </StatusCard>
 
             <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
@@ -1309,6 +1351,7 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                 Concurrence
                 <select
                   value={localAgentSettings.concurrency}
+                  title="6 = Wi-Fi recommandé, 8 = LAN recommandé, 10 = avancé / test seulement"
                   onChange={(e) => updateLocalAgentSettings({ concurrency: Number(e.target.value) })}
                   style={{
                     padding: 8,
@@ -1318,12 +1361,10 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   }}
                   disabled={!!localExportJobId}
                 >
-                  <option value={1}>1 — très prudent</option>
-                  <option value={2}>2 — prudent</option>
-                  <option value={3}>3 — recommandé</option>
-                  <option value={4}>4 — rapide</option>
-                  <option value={5}>5 — agressif</option>
-                  <option value={6}>6 — rapide recommandé</option>
+                  <option value={4}>4 — Wi-Fi prudent</option>
+                  <option value={6}>6 — Wi-Fi recommandé</option>
+                  <option value={8}>8 — LAN recommandé</option>
+                  <option value={10}>10 — Avancé / test seulement</option>
                 </select>
               </label>
 
@@ -1346,6 +1387,26 @@ Le fichier semble projeté. Choisissez le SCR source ci-dessous pour tenter une 
                   <option value={3}>3</option>
                 </select>
               </label>
+            </div>
+
+            <div
+              title={getNetworkProfileDescription(localAgentSettings.concurrency)}
+              style={{
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid var(--primary)",
+                background: "var(--primary-soft)",
+                color: "var(--text-main)",
+                fontSize: 12,
+                lineHeight: 1.45,
+              }}
+            >
+              <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                Profil réseau actif : {getNetworkProfileLabel(localAgentSettings.concurrency)}
+              </div>
+              <div style={{ color: "var(--text-muted)" }}>
+                Concurrence {localAgentSettings.concurrency} · {getNetworkProfileDescription(localAgentSettings.concurrency)}
+              </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

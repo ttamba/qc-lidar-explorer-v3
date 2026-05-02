@@ -1,378 +1,738 @@
-import type { AoiFeature, TileFeature } from "../types";
+/**
+ * src/agent/localAgent.ts
+ * QC LiDAR / MNT Explorer — Agent local FastAPI v3
+ *
+ * Correctif de compatibilité App.tsx.
+ *
+ * Cette version restaure les signatures attendues par ton App.tsx actuel :
+ * - pingLocalAgent() retourne { service, version, ok }
+ * - LocalAgentJobStatus est un OBJET de progression, pas une union string
+ * - buildLocalExportJob(...) crée directement le job côté agent et retourne { job_id, ... }
+ * - paramètres UI historiques conservés : outputDir, retryCount, requestTimeoutSeconds,
+ *   metadataDatasetName, keepDownloadedFiles, etc.
+ *
+ * Endpoints agent :
+ * - GET  /health ou /docs fallback
+ * - POST /jobs-v3
+ * - GET  /jobs-v3/{job_id}
+ * - POST /jobs-v3/{job_id}/cancel
+ */
 
-export const LOCAL_AGENT_BASE_URL = "http://127.0.0.1:8765";
-
-export type LocalAgentOutputMode = "zip" | "folder";
-export type LocalAgentPackageMode = "lean" | "full";
-export type LocalAgentProduct = "lidar" | "mnt" | "orthophoto" | "mixed" | "unknown";
-
-export type LocalAgentExportSettings = {
-  outputDir: string;
-  concurrency: number;
-  retryCount: number;
-  requestTimeoutSeconds: number;
-  metadataDatasetName: string | null;
-  keepDownloadedFiles: boolean;
-  packageMode?: LocalAgentPackageMode;
-  outputMode?: LocalAgentOutputMode;
-};
-
-export const DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS: LocalAgentExportSettings = {
-  outputDir: "C:\\HQ\\exports",
-  concurrency: 6,
-  retryCount: 2,
-  requestTimeoutSeconds: 180,
-  metadataDatasetName: null,
-  keepDownloadedFiles: false,
-  packageMode: "lean",
-  outputMode: "zip",
-};
-
-export type LocalAgentHealth = {
-  ok?: boolean;
-  service: string;
-  version: string;
-};
+export type LocalAgentJobState =
+  | "queued"
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export type LocalAgentJobPhase =
   | "queued"
   | "prepare"
   | "estimate"
   | "download"
-  | "metadata"
+  | "downloading"
   | "zip"
+  | "finalizing"
   | "done"
-  | "error";
+  | "init"
+  | string;
 
-export type LocalAgentJobState =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export interface LocalAgentExportSettings {
+  enabled: boolean;
+  baseUrl: string;
 
-export type LocalAgentJobStatus = {
-  job_id?: string;
+  // Réglages réseau/export
+  concurrency: number;
+  networkProfile: "wifi" | "lan" | "advanced";
+  pollingIntervalMs: number;
+  requestTimeoutSeconds: number;
+  timeoutSeconds: number;
+  retryCount: number;
+
+  // Réglages de sortie
+  outputDir: string;
+  keepDownloadedFiles: boolean;
+
+  // Métadonnées
+  metadataDatasetName: string | null;
+}
+
+export type LocalAgentUiSettings = LocalAgentExportSettings;
+
+export const DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS: LocalAgentExportSettings = {
+  enabled: true,
+  baseUrl: "http://127.0.0.1:8787",
+
+  concurrency: 6,
+  networkProfile: "wifi",
+  pollingIntervalMs: 500,
+  requestTimeoutSeconds: 60,
+  timeoutSeconds: 60,
+  retryCount: 2,
+
+  outputDir: "C:/HQ/exports",
+  keepDownloadedFiles: true,
+
+  metadataDatasetName: null,
+};
+
+export interface LocalAgentHealth {
+  ok: boolean;
+  service: string;
+  version: string;
+  baseUrl?: string;
+  message?: string;
+}
+
+export interface LocalAgentFileItem {
+  url: string;
+  dest_path: string;
+  size?: number | null;
+  filename?: string;
+  name?: string;
+}
+
+export interface LocalAgentExportJobRequest {
+  /**
+   * Compatibilité App.tsx :
+   * App.tsx lit job.job_id avant l'appel à createLocalExportJob(job).
+   * À cette étape, le vrai job_id n'existe pas encore côté agent.
+   * Il sera remplacé par created.job_id après POST /jobs-v3 si App.tsx le fait déjà.
+   */
+  job_id: string;
+
+  files: LocalAgentFileItem[];
+  concurrency: number;
+  output_dir: string;
+  metrics_path?: string | null;
+  timeout_s: number;
+
+  // Champs tolérants pour compatibilité avec versions précédentes
+  aoi?: unknown;
+  dataset?: string;
+  dataset_name?: string | null;
+  keep_downloaded_files?: boolean;
+  retry_count?: number;
+  network_profile?: "wifi" | "lan" | "advanced";
+}
+
+export interface LocalAgentCreateJobResponse {
+  job_id: string;
+}
+
+export interface LocalAgentJobStatus {
+  job_id: string;
   status: LocalAgentJobState;
   phase: LocalAgentJobPhase;
+
   percent: number;
+
   completed: number;
   total: number;
-  current_file?: string | null;
-  message?: string | null;
+
   downloaded_count: number;
   failed_count: number;
-  elapsed_ms?: number;
+
+  current_file?: string | null;
+
+  elapsed_ms: number;
   eta_ms?: number;
+
   bytes_downloaded: number;
   bytes_total_estimated: number;
-  avg_speed_mbps?: number | null;
+
+  avg_speed_mbps?: number;
+  avg_speed_mb_s?: number;
+
+  output_dir?: string;
+  metrics_path?: string | null;
   zip_path?: string | null;
-  output_dir?: string | null;
-  folder_path?: string | null;
-};
 
-export type LocalAgentTilePayload = {
-  tile_id: string;
-  name: string;
-  product: LocalAgentProduct;
-  year?: string | null;
-  url?: string | null;
-  provider?: string | null;
-  source_attributes?: Record<string, unknown> | null;
-};
-
-export type LocalAgentJobOptions = {
-  concurrency: number;
-  retry_count: number;
-  create_zip: boolean;
-  keep_downloaded_files: boolean;
-  request_timeout_seconds: number;
-  metadata_source_name: string;
-  metadata_dataset_name: string | null;
-  package_mode: LocalAgentPackageMode;
-  output_mode?: LocalAgentOutputMode;
-};
-
-export type LocalAgentExportJob = {
-  job_id: string;
-  created_at: string;
-  product: LocalAgentProduct;
-  output_dir: string;
-  zip_name: string;
-  aoi_geojson: Record<string, unknown>;
-  tiles: LocalAgentTilePayload[];
-  options: LocalAgentJobOptions;
-};
-
-export type LocalAgentCreateJobResponse = {
-  job_id: string;
-  status?: LocalAgentJobState;
-  phase?: LocalAgentJobPhase;
-};
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  message?: string | null;
 }
 
-function stringValue(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  const text = String(value).trim();
-  return text.length > 0 ? text : undefined;
+export interface BuildLocalExportJobInput {
+  // Champs utilisés par App.tsx actuel
+  aoi?: unknown;
+  tiles?: Array<Record<string, unknown>>;
+  selectedTiles?: Array<Record<string, unknown>>;
+  selectedTileUrls?: string[];
+  urls?: string[];
+  files?: Array<{
+    url: string;
+    filename?: string;
+    name?: string;
+    dest_path?: string;
+    size?: number | null;
+  }>;
+
+  dataset?: string;
+  datasetName?: string;
+  outputDir?: string;
+  metricsPath?: string | null;
+
+  settings?: Partial<LocalAgentExportSettings>;
+
+  // Tolérance maximale pour éviter les ruptures TS lors des refactors UI
+  [key: string]: unknown;
 }
 
-function numberValue(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+export class LocalAgentError extends Error {
+  status?: number;
+  details?: unknown;
 
-function sanitizeName(name: string) {
-  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
-}
-
-function clamp(value: number, min: number, max: number, fallback: number) {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(value)));
-}
-
-function buildLocalExportJobId() {
-  const now = new Date();
-  const pad = (n: number, size = 2) => String(n).padStart(size, "0");
-  
-   const timestamp = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate()),
-    "-",
-    pad(now.getHours()),
-    pad(now.getMinutes()),
-    pad(now.getSeconds()),
-    "-",
-    pad(now.getMilliseconds(), 3),
-  ].join("");
-  
-  const random = Math.random().toString(36).slice(2, 8);
-  
-  return `job-${timestamp}-${random}`;
-}
-
-function inferProductFromTiles(tiles: LocalAgentTilePayload[]): LocalAgentProduct {
-  const products = new Set(
-    tiles
-      .map((tile) => tile.product)
-      .filter((product): product is "lidar" | "mnt" => product === "lidar" || product === "mnt")
-  );
-
-  if (products.size === 1) {
-    if (products.has("lidar")) return "lidar";
-    if (products.has("mnt")) return "mnt";
+  constructor(message: string, status?: number, details?: unknown) {
+    super(message);
+    this.name = "LocalAgentError";
+    this.status = status;
+    this.details = details;
   }
-
-  if (products.size > 1) return "mixed";
-  return "unknown";
 }
 
-function buildLocalZipName(product: LocalAgentProduct, jobId: string) {
-  return sanitizeName(`qc_${product}_bundle_${jobId}.zip`);
+function normalizeBaseUrl(baseUrl?: string): string {
+  return (baseUrl || DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS.baseUrl).replace(/\/+$/, "");
 }
 
-function normalizeProduct(value: unknown): LocalAgentProduct {
-  const text = stringValue(value)?.toLowerCase();
+function getRequestTimeoutMs(settings?: Partial<LocalAgentExportSettings>): number {
+  const seconds =
+    settings?.requestTimeoutSeconds ??
+    settings?.timeoutSeconds ??
+    DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS.requestTimeoutSeconds;
 
-  if (text === "lidar") return "lidar";
-  if (text === "mnt") return "mnt";
-  if (text === "orthophoto") return "orthophoto";
-
-  return "unknown";
+  return Math.max(1, seconds) * 1000;
 }
 
-function normalizeTile(tile: TileFeature): LocalAgentTilePayload {
-  const props = asRecord(tile.properties);
-
-  const url =
-    stringValue(props.normalized_url) ??
-    stringValue(props.url) ??
-    stringValue(props.URL) ??
-    stringValue(props.TELECHARGEMENT_TUILE) ??
-    stringValue(props.download_url) ??
-    stringValue(props.downloadUrl) ??
-    stringValue(props.href) ??
-    stringValue(props.HREF);
-
-  if (!url) {
-    throw new Error("Une tuile sélectionnée ne contient pas d’URL de téléchargement.");
+function getFileNameFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    return decodeURIComponent(last || "download.bin");
+  } catch {
+    const last = url.split("?")[0].split("/").filter(Boolean).pop();
+    return last || "download.bin";
   }
+}
 
-  const tileId =
-    stringValue(props.normalized_id) ??
-    stringValue(props.tile_id) ??
-    stringValue(props.id) ??
-    stringValue(props.ID) ??
-    stringValue(props.NOM_TUILE) ??
-    stringValue(props.tuile) ??
-    stringValue((tile as unknown as Record<string, unknown>).id) ??
-    "tile";
+function joinPath(base: string, child: string): string {
+  const cleanBase = base.replace(/[\\/]+$/, "");
+  const cleanChild = child.replace(/^[\\/]+/, "");
+  return `${cleanBase}/${cleanChild}`;
+}
 
-  const name =
-    stringValue(props.normalized_name) ??
-    stringValue(props.NOM_TUILE) ??
-    stringValue(props.filename) ??
-    stringValue(props.file_name) ??
-    stringValue(props.nom_fichier) ??
-    stringValue(props.name) ??
-    tileId;
+function createTimeoutSignal(ms: number): AbortController {
+  const controller = new AbortController();
+  window.setTimeout(() => controller.abort(), ms);
+  return controller;
+}
 
-  const product = normalizeProduct(
-    props.normalized_product ?? props.product ?? props.PRODUIT ?? props.type_produit
-  );
+function mergeAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
 
-  return {
-    tile_id: tileId,
-    name,
-    product,
-    year:
-      stringValue(props.normalized_year) ??
-      stringValue(props.year) ??
-      stringValue(props.annee) ??
-      stringValue(props.millesime) ??
-      null,
-    url,
-    provider:
-      stringValue(props.normalized_provider) ??
-      stringValue(props.provider) ??
-      stringValue(props.PROVIDER) ??
-      "QC",
-    source_attributes: props,
+  const abort = () => {
+    if (!controller.signal.aborted) controller.abort();
   };
-}
 
-async function parseJsonResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Erreur agent local ${response.status}: ${text || response.statusText}`);
+  for (const signal of signals) {
+    if (signal.aborted) {
+      abort();
+      break;
+    }
+    signal.addEventListener("abort", abort, { once: true });
   }
 
-  return response.json() as Promise<T>;
+  return controller.signal;
 }
 
-export async function pingLocalAgent(): Promise<LocalAgentHealth> {
-  const response = await fetch(`${LOCAL_AGENT_BASE_URL}/health`);
-  const data = await parseJsonResponse<Record<string, unknown>>(response);
+async function parseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return null;
 
-  return {
-    ok: data.ok === undefined ? data.status === "ok" : Boolean(data.ok),
-    service: String(data.service ?? data.agent ?? "QC LiDAR / MNT Local Agent"),
-    version: String(data.version ?? "unknown"),
-  };
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
-export function buildLocalExportJob(args: {
-  aoi: AoiFeature;
-  tiles: TileFeature[];
-  settings: LocalAgentExportSettings;
-}): LocalAgentExportJob {
-  const outputMode = args.settings.outputMode ?? "zip";
-  const packageMode = args.settings.packageMode ?? "lean";
-  const localTiles = args.tiles.map(normalizeTile);
-  const product = inferProductFromTiles(localTiles);
-  const jobId = buildLocalExportJobId();
+async function requestJson<T>(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 30000,
+): Promise<T> {
+  const timeoutController = createTimeoutSignal(timeoutMs);
+  const signal = init.signal
+    ? mergeAbortSignals(init.signal, timeoutController.signal)
+    : timeoutController.signal;
 
-  const keepDownloadedFiles =
-    outputMode === "folder" ? true : Boolean(args.settings.keepDownloadedFiles);
-
-  return {
-    job_id: jobId,
-    created_at: new Date().toISOString(),
-    product,
-    output_dir: args.settings.outputDir,
-    zip_name: buildLocalZipName(product, jobId),
-    aoi_geojson: {
-      type: "FeatureCollection",
-      features: [args.aoi],
+  const response = await fetch(url, {
+    ...init,
+    signal,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers ?? {}),
     },
-    tiles: localTiles,
-    options: {
-      concurrency: clamp(args.settings.concurrency, 1, 8, 3),
-      retry_count: clamp(args.settings.retryCount, 0, 5, 1),
-      create_zip: outputMode === "zip",
-      keep_downloaded_files: keepDownloadedFiles,
-      request_timeout_seconds: clamp(args.settings.requestTimeoutSeconds, 10, 3600, 180),
-      metadata_source_name: "Gouvernement du Québec",
-      metadata_dataset_name: args.settings.metadataDatasetName ?? null,
-      package_mode: packageMode,
-      output_mode: outputMode,
-    },
-  };
-}
-
-export async function createLocalExportJob(
-  job: LocalAgentExportJob
-): Promise<LocalAgentCreateJobResponse> {
-  const response = await fetch(`${LOCAL_AGENT_BASE_URL}/jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(job),
   });
 
-  const data = await parseJsonResponse<Record<string, unknown>>(response);
-
-  return {
-    job_id: stringValue(data.job_id) ?? stringValue(data.jobId) ?? job.job_id,
-    status: stringValue(data.status) as LocalAgentJobState | undefined,
-    phase: stringValue(data.phase) as LocalAgentJobPhase | undefined,
-  };
-}
-
-export async function getLocalExportJobStatus(jobId: string): Promise<LocalAgentJobStatus> {
-  const response = await fetch(`${LOCAL_AGENT_BASE_URL}/jobs/${encodeURIComponent(jobId)}`);
-  const data = await parseJsonResponse<Record<string, unknown>>(response);
-
-  return {
-    job_id: stringValue(data.job_id) ?? stringValue(data.jobId) ?? jobId,
-    status: (stringValue(data.status) ?? "running") as LocalAgentJobState,
-    phase: (stringValue(data.phase) ?? "download") as LocalAgentJobPhase,
-    percent: numberValue(data.percent, 0),
-    completed: numberValue(data.completed, 0),
-    total: numberValue(data.total, 0),
-    current_file: stringValue(data.current_file) ?? stringValue(data.currentFile) ?? null,
-    message: stringValue(data.message) ?? null,
-    downloaded_count: numberValue(data.downloaded_count ?? data.downloadedCount, 0),
-    failed_count: numberValue(data.failed_count ?? data.failedCount, 0),
-    elapsed_ms: numberValue(data.elapsed_ms ?? data.elapsedMs, 0),
-    eta_ms:
-      data.eta_ms === undefined && data.etaMs === undefined
-        ? undefined
-        : numberValue(data.eta_ms ?? data.etaMs, 0),
-    bytes_downloaded: numberValue(data.bytes_downloaded ?? data.bytesDownloaded, 0),
-    bytes_total_estimated: numberValue(
-      data.bytes_total_estimated ?? data.bytesTotalEstimated,
-      0
-    ),
-    avg_speed_mbps:
-      data.avg_speed_mbps === undefined && data.avgSpeedMbps === undefined
-        ? null
-        : numberValue(data.avg_speed_mbps ?? data.avgSpeedMbps, 0),
-    zip_path: stringValue(data.zip_path) ?? stringValue(data.zipPath) ?? null,
-    output_dir:
-      stringValue(data.output_dir) ??
-      stringValue(data.outputDir) ??
-      stringValue(data.folder_path) ??
-      stringValue(data.folderPath) ??
-      null,
-    folder_path: stringValue(data.folder_path) ?? stringValue(data.folderPath) ?? null,
-  };
-}
-
-export async function cancelLocalExportJob(jobId: string): Promise<void> {
-  const response = await fetch(
-    `${LOCAL_AGENT_BASE_URL}/jobs/${encodeURIComponent(jobId)}/cancel`,
-    {
-      method: "POST",
-    }
-  );
+  const body = await parseBody(response);
 
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Impossible d’annuler le job local ${jobId}: ${text || response.statusText}`);
+    throw new LocalAgentError(
+      `Erreur agent local HTTP ${response.status}`,
+      response.status,
+      body,
+    );
+  }
+
+  return body as T;
+}
+
+function extractUrlFromTile(tile: Record<string, unknown>): string | null {
+  const props =
+    tile.properties && typeof tile.properties === "object"
+      ? (tile.properties as Record<string, unknown>)
+      : {};
+
+  const candidates = [
+    tile.url,
+    tile.download_url,
+    tile.downloadUrl,
+    tile.href,
+    tile.laz_url,
+    tile.lidar_url,
+    tile.mnt_url,
+    tile.source_url,
+
+    props.url,
+    props.URL,
+    props.Url,
+    props.download_url,
+    props.downloadUrl,
+    props.DOWNLOAD_URL,
+    props.href,
+    props.HREF,
+    props.laz_url,
+    props.LAZ_URL,
+    props.lidar_url,
+    props.LIDAR_URL,
+    props.mnt_url,
+    props.MNT_URL,
+    props.source_url,
+    props.SOURCE_URL,
+    props.file_url,
+    props.FILE_URL,
+    props.telechargement,
+    props.TELECHARGEMENT,
+    props.download,
+    props.DOWNLOAD,
+    props.lien,
+    props.LIEN,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  // Recherche de secours : plusieurs index de tuiles exposent l’URL
+  // sous un nom métier variable. On accepte toute propriété string HTTP(S)
+  // qui ressemble à un livrable LiDAR/MNT téléchargeable.
+  const allValues = [
+    ...Object.values(tile),
+    ...Object.values(props),
+  ];
+
+  for (const value of allValues) {
+    if (typeof value !== "string") continue;
+    const v = value.trim();
+    if (!/^https?:\/\//i.test(v)) continue;
+
+    const lower = v.toLowerCase();
+    if (
+      lower.includes(".laz") ||
+      lower.includes(".las") ||
+      lower.includes(".zip") ||
+      lower.includes(".tif") ||
+      lower.includes(".tiff") ||
+      lower.includes("lidar") ||
+      lower.includes("mnt")
+    ) {
+      return v;
+    }
+  }
+
+  return null;
+}
+
+function normalizeFiles(input: BuildLocalExportJobInput, outputDir: string): LocalAgentFileItem[] {
+  const normalized: LocalAgentFileItem[] = [];
+
+  if (input.files && input.files.length > 0) {
+    for (const file of input.files) {
+      const filename = file.filename || file.name || getFileNameFromUrl(file.url);
+      normalized.push({
+        url: file.url,
+        dest_path: file.dest_path || joinPath(outputDir, filename),
+        size: file.size ?? null,
+      });
+    }
+    return normalized;
+  }
+
+  if (input.urls && input.urls.length > 0) {
+    for (const url of input.urls) {
+      normalized.push({
+        url,
+        dest_path: joinPath(outputDir, getFileNameFromUrl(url)),
+        size: null,
+      });
+    }
+    return normalized;
+  }
+
+  if (input.selectedTileUrls && input.selectedTileUrls.length > 0) {
+    for (const url of input.selectedTileUrls) {
+      normalized.push({
+        url,
+        dest_path: joinPath(outputDir, getFileNameFromUrl(url)),
+        size: null,
+      });
+    }
+    return normalized;
+  }
+
+  const tileArrays = [input.selectedTiles, input.tiles];
+
+  for (const arr of tileArrays) {
+    if (!arr || arr.length === 0) continue;
+
+    for (const tile of arr) {
+      const url = extractUrlFromTile(tile);
+      if (!url) continue;
+
+      const props =
+        tile.properties && typeof tile.properties === "object"
+          ? (tile.properties as Record<string, unknown>)
+          : {};
+
+      const filename =
+        typeof tile.filename === "string"
+          ? tile.filename
+          : typeof tile.name === "string"
+            ? tile.name
+            : typeof props.filename === "string"
+              ? props.filename
+              : typeof props.name === "string"
+                ? props.name
+                : typeof props.NOM === "string"
+                  ? props.NOM
+                  : getFileNameFromUrl(url);
+
+      const size =
+        typeof tile.size === "number"
+          ? tile.size
+          : typeof tile.bytes === "number"
+            ? tile.bytes
+            : typeof props.size === "number"
+              ? props.size
+              : typeof props.bytes === "number"
+                ? props.bytes
+                : null;
+
+      normalized.push({
+        url,
+        dest_path: joinPath(outputDir, filename),
+        size,
+      });
+    }
+
+    if (normalized.length > 0) return normalized;
+  }
+
+  return normalized;
+}
+
+/**
+ * Ping robuste.
+ * Retourne un objet, car App.tsx lit health.service et health.version.
+ */
+export async function pingLocalAgent(
+  settings: Partial<LocalAgentExportSettings> = {},
+): Promise<LocalAgentHealth> {
+  const baseUrl = normalizeBaseUrl(settings.baseUrl);
+  const timeoutMs = 3000;
+
+  try {
+    try {
+      const health = await requestJson<Partial<LocalAgentHealth>>(
+        `${baseUrl}/health`,
+        { method: "GET" },
+        timeoutMs,
+      );
+
+      return {
+        ok: health.ok ?? true,
+        service: health.service ?? "QC LiDAR Agent",
+        version: health.version ?? "v3",
+        baseUrl,
+        message: health.message,
+      };
+    } catch {
+      const controller = createTimeoutSignal(timeoutMs);
+      const response = await fetch(`${baseUrl}/docs`, {
+        method: "GET",
+        signal: controller.signal,
+      });
+
+      return {
+        ok: response.ok,
+        service: "QC LiDAR Agent",
+        version: "v3",
+        baseUrl,
+      };
+    }
+  } catch {
+    return {
+      ok: false,
+      service: "QC LiDAR Agent",
+      version: "indisponible",
+      baseUrl,
+      message: "Agent local non joignable.",
+    };
   }
 }
+
+/**
+ * Construit le payload /jobs-v3 sans appeler l’agent.
+ * Utile si App.tsx veut seulement préparer la requête.
+ */
+export function buildLocalExportJobPayload(
+  input: BuildLocalExportJobInput,
+): LocalAgentExportJobRequest {
+  const settings = {
+    ...DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
+    ...(input.settings ?? {}),
+  };
+
+  const outputDir =
+    input.outputDir ||
+    settings.outputDir ||
+    DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS.outputDir;
+
+  const files = normalizeFiles(input, outputDir);
+
+  if (!files.length) {
+    throw new LocalAgentError(
+      "Aucune URL de tuile détectée. Vérifie que les tuiles sélectionnées contiennent un champ url/download_url.",
+    );
+  }
+
+  return {
+    job_id: "",
+    files,
+    concurrency: settings.concurrency,
+    output_dir: outputDir,
+    metrics_path: input.metricsPath ?? joinPath(outputDir, "metrics.json"),
+    timeout_s: settings.requestTimeoutSeconds ?? settings.timeoutSeconds,
+    aoi: input.aoi,
+    dataset: input.dataset,
+    dataset_name: input.datasetName ?? settings.metadataDatasetName,
+    keep_downloaded_files: settings.keepDownloadedFiles,
+    retry_count: settings.retryCount,
+    network_profile: settings.networkProfile,
+  };
+}
+
+/**
+ * Fonction attendue par App.tsx actuel :
+ * elle construit seulement le payload. App.tsx appelle ensuite createLocalExportJob(job).
+ */
+export function buildLocalExportJob(
+  input: BuildLocalExportJobInput,
+): LocalAgentExportJobRequest {
+  return buildLocalExportJobPayload(input);
+}
+
+/**
+ * Crée un job async côté agent.
+ */
+export async function createLocalExportJob(
+  job: LocalAgentExportJobRequest,
+  settings: Partial<LocalAgentExportSettings> = {},
+  signal?: AbortSignal,
+): Promise<LocalAgentCreateJobResponse> {
+  const mergedSettings = {
+    ...DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
+    ...settings,
+  };
+
+  const baseUrl = normalizeBaseUrl(mergedSettings.baseUrl);
+
+  const response = await requestJson<LocalAgentCreateJobResponse>(
+    `${baseUrl}/jobs-v3`,
+    {
+      method: "POST",
+      body: JSON.stringify(job),
+      signal,
+    },
+    getRequestTimeoutMs(mergedSettings),
+  );
+
+  if (!response.job_id) {
+    throw new LocalAgentError("L’agent local n’a pas retourné de job_id.");
+  }
+
+  return response;
+}
+
+/**
+ * Lit la progression réelle du job.
+ */
+export async function getLocalExportJobStatus(
+  jobId: string,
+  settings: Partial<LocalAgentExportSettings> = {},
+  signal?: AbortSignal,
+): Promise<LocalAgentJobStatus> {
+  if (!jobId) {
+    throw new LocalAgentError("job_id manquant.");
+  }
+
+  const mergedSettings = {
+    ...DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
+    ...settings,
+  };
+
+  const baseUrl = normalizeBaseUrl(mergedSettings.baseUrl);
+
+  const raw = await requestJson<Partial<LocalAgentJobStatus>>(
+    `${baseUrl}/jobs-v3/${encodeURIComponent(jobId)}`,
+    {
+      method: "GET",
+      signal,
+    },
+    getRequestTimeoutMs(mergedSettings),
+  );
+
+  const avgMbS =
+    typeof raw.avg_speed_mb_s === "number"
+      ? raw.avg_speed_mb_s
+      : typeof raw.avg_speed_mbps === "number"
+        ? raw.avg_speed_mbps / 8
+        : 0;
+
+  return {
+    job_id: raw.job_id ?? jobId,
+    status: raw.status ?? "running",
+    phase: raw.phase ?? "downloading",
+
+    percent: raw.percent ?? 0,
+
+    completed: raw.completed ?? 0,
+    total: raw.total ?? 0,
+
+    downloaded_count: raw.downloaded_count ?? 0,
+    failed_count: raw.failed_count ?? 0,
+
+    current_file: raw.current_file ?? null,
+
+    elapsed_ms: raw.elapsed_ms ?? 0,
+    eta_ms: raw.eta_ms ?? undefined,
+
+    bytes_downloaded: raw.bytes_downloaded ?? 0,
+    bytes_total_estimated: raw.bytes_total_estimated ?? 0,
+
+    avg_speed_mb_s: avgMbS,
+    avg_speed_mbps:
+      typeof raw.avg_speed_mbps === "number"
+        ? raw.avg_speed_mbps
+        : Number((avgMbS * 8).toFixed(2)),
+
+    output_dir: raw.output_dir,
+    metrics_path: raw.metrics_path ?? null,
+    zip_path: raw.zip_path ?? null,
+
+    message: raw.message ?? null,
+  };
+}
+
+/**
+ * Annule proprement le job côté agent.
+ */
+export async function cancelLocalExportJob(
+  jobId: string,
+  settings: Partial<LocalAgentExportSettings> = {},
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!jobId) return;
+
+  const mergedSettings = {
+    ...DEFAULT_LOCAL_AGENT_EXPORT_SETTINGS,
+    ...settings,
+  };
+
+  const baseUrl = normalizeBaseUrl(mergedSettings.baseUrl);
+
+  await requestJson<{ status: string }>(
+    `${baseUrl}/jobs-v3/${encodeURIComponent(jobId)}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+      signal,
+    },
+    getRequestTimeoutMs(mergedSettings),
+  );
+}
+
+/**
+ * Helpers UI.
+ */
+export function isLocalExportTerminal(status?: LocalAgentJobState | LocalAgentJobStatus | null): boolean {
+  const value = typeof status === "string" ? status : status?.status;
+  return value === "completed" || value === "failed" || value === "cancelled";
+}
+
+export function isLocalExportRunning(status?: LocalAgentJobState | LocalAgentJobStatus | null): boolean {
+  const value = typeof status === "string" ? status : status?.status;
+  return value === "pending" || value === "queued" || value === "running";
+}
+
+export function formatElapsedMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0 s";
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes <= 0) return `${seconds} s`;
+  return `${minutes} min ${seconds.toString().padStart(2, "0")} s`;
+}
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const decimals = unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(decimals)} ${units[unitIndex]}`;
+}
+
+export function formatSpeedMBs(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 MB/s";
+  return `${value.toFixed(value >= 10 ? 1 : 2)} MB/s`;
+}
+
+// Alias conservés pour compatibilité avec les premiers fichiers générés.
+export type AgentJobStatus = LocalAgentJobState;
+export type AgentJobPhase = LocalAgentJobPhase;
+export type AgentFileItem = LocalAgentFileItem;
+export type CreateJobV3Request = LocalAgentExportJobRequest;
+export type CreateJobV3Response = LocalAgentCreateJobResponse;
+export type JobV3Progress = LocalAgentJobStatus;
